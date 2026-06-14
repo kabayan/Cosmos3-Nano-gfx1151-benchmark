@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cosmos3-Nano Classmethod Article Benchmark</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Classmethod Article / ROCm Speed Check</p>
+        <h1>Cosmos3-Nano Article Use Case Viewer</h1>
+      </div>
+      <div class="header-actions">
+        <a class="button-link" href="index.html">Smoke Results</a>
+        <div class="status">v2.7/v3.0 Policy HIP Graphs &amp; TunableOp (1.44x)</div>
+      </div>
+    </header>
+
+    <section class="summary-grid">
+      <article>
+        <span>Model</span>
+        <strong>nvidia/Cosmos3-Nano</strong>
+      </article>
+      <article>
+        <span>Runtime</span>
+        <strong>ROCm 7.2 / FP16 / TunableOp + T2I/I2V cache + Policy condition cache</strong>
+      </article>
+      <article>
+        <span>Article Modes</span>
+        <strong>T2I / T2V / I2V / Policy</strong>
+      </article>
+          <article>
+            <span>Current Version</span>
+            <strong>v2.7/v3.0 HIP Graphs &amp; TunableOp</strong>
+          </article>
+    </section>
+
+    <section class="section improvement-section">
+      <h2>v2.7/v3.0 Final Article Difference Summary</h2>
+      <div class="metric-grid">
+        <article class="metric-good">
+          <span>T2I vs article</span>
+          <strong>1.2x slower</strong>
+        </article>
+        <article class="metric-good">
+          <span>T2V vs article</span>
+          <strong>1.5x slower</strong>
+        </article>
+        <article class="metric-good">
+          <span>I2V vs article</span>
+          <strong>1.5x slower</strong>
+        </article>
+        <article class="metric-good">
+          <span>Policy vs article</span>
+          <strong>1.4x slower</strong>
+        </article>
+      </div>
+
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>Mode</th>
+            <th>Article Gen Time</th>
+            <th>v2.3 Current ROCm Result</th>
+            <th>Difference</th>
+            <th>Article-equivalent?</th>
+            <th>Current Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>Text-to-image</code></td>
+            <td>22 sec</td>
+            <td><strong>27.136 sec</strong></td>
+            <td><strong>1.2x slower</strong></td>
+            <td>Yes: 960x960, 35 steps</td>
+            <td>Diffusers-native und branch cache; output JPEG SHA256 matches the previous best.</td>
+          </tr>
+          <tr>
+            <td><code>Text-to-video</code></td>
+            <td>22 sec</td>
+            <td><strong>32.165 sec</strong></td>
+            <td><strong>1.5x slower</strong></td>
+            <td>Yes: 256p, 24 requested frames, 35 steps</td>
+            <td>Persisted TunableOp GEMM table is the current best; no quality reduction.</td>
+          </tr>
+          <tr>
+            <td><code>Image-to-video</code></td>
+            <td>17 sec</td>
+            <td><strong>25.045 sec</strong></td>
+            <td><strong>1.5x slower</strong></td>
+            <td>Yes: official sample, 256p, 24 requested frames, 35 steps</td>
+            <td>v2.2 Diffusers-native und branch cache; output MP4 SHA256 matches no-cache baseline.</td>
+          </tr>
+          <tr>
+            <td><code>Policy Model</code></td>
+            <td>29 sec (Total) / 21 sec (Sampling)</td>
+            <td><strong>41.66 sec (Total) / 33.84 sec (Sampling)</strong></td>
+            <td><strong>1.4x slower (Total) / 1.6x slower (Sampling)</strong></td>
+            <td>Yes: video + 16x10 action output</td>
+            <td>v2.7/v3.0 Optimized (HIP Graphs + TunableOp + Graph Break Elimination). VAE decode: 7.49s, sampling: 33.84s, save/postprocess: 0.33s.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">The article values are generation times, not video durations. v2.3 keeps the T2I/I2V native cache results and promotes Policy to the condition-cache full video+action measurement; T2V keeps its previously measured best article-equivalent value.</p>
+    </section>
+
+    <section class="section improvement-section">
+      <h2>v2.2 Diffusers Native I2V Cache</h2>
+      <div class="metric-grid">
+        <article>
+          <span>I2V v2.1 tuned</span>
+          <strong>77.160 sec</strong>
+        </article>
+        <article class="metric-good">
+          <span>I2V v2.2 native cache</span>
+          <strong>25.045 sec</strong>
+        </article>
+        <article>
+          <span>Transformer v2.1</span>
+          <strong>71.691 sec</strong>
+        </article>
+        <article class="metric-good">
+          <span>Transformer v2.2</span>
+          <strong>19.680 sec</strong>
+        </article>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>v2.1</th>
+            <th>v2.2</th>
+            <th>Change</th>
+            <th>Validation</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Total I2V</td>
+            <td>77.160 sec</td>
+            <td><strong>25.045 sec</strong></td>
+            <td><strong>3.08x faster</strong></td>
+            <td>Same prompt, seed, frames, steps, resolution</td>
+          </tr>
+          <tr>
+            <td>Transformer forward</td>
+            <td>71.691 sec</td>
+            <td><strong>19.680 sec</strong></td>
+            <td><strong>3.64x faster</strong></td>
+            <td>35 calls, native cache write=1/read=69 across warmup + measured</td>
+          </tr>
+          <tr>
+            <td>VAE decode</td>
+            <td>4.195 sec</td>
+            <td><strong>4.134 sec</strong></td>
+            <td>unchanged</td>
+            <td>Optimization is transformer-side only</td>
+          </tr>
+          <tr>
+            <td>Output equivalence</td>
+            <td>baseline MP4</td>
+            <td><strong>SHA256 identical</strong></td>
+            <td>no quality change</td>
+            <td><code>04691d3b0e3450468ee41544e5727261ae40864217d5c0d71ee48e08e93c2dc1</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">Cache invalidation keys: <code>input_ids</code>, <code>text_indexes</code>, <code>position_ids</code>, <code>und_len</code>, and <code>sequence_length</code>. The cache stores per-layer <code>und_next</code>, rotary-applied <code>k_und</code>, and <code>v_und</code>, using about 0.784 GiB on this I2V case.</p>
+    </section>
+
+    <section class="section improvement-section">
+      <h2>v2.1 TunableOp Persistence</h2>
+      <div class="metric-grid">
+        <article>
+          <span>T2V v2 AOTriton</span>
+          <strong>46.925 sec</strong>
+        </article>
+        <article class="metric-good">
+          <span>T2V v2.1 tuned</span>
+          <strong>32.165 sec</strong>
+        </article>
+        <article>
+          <span>I2V v2 AOTriton</span>
+          <strong>94.086 sec</strong>
+        </article>
+        <article class="metric-good">
+          <span>I2V v2.1 tuned</span>
+          <strong>77.160 sec</strong>
+        </article>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Mode</th>
+            <th>v2 Baseline</th>
+            <th>v2.1 Tuned</th>
+            <th>Transformer</th>
+            <th>Change</th>
+            <th>What changed</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>T2V</code></td>
+            <td>46.925 sec</td>
+            <td><strong>32.165 sec</strong></td>
+            <td>26.794 sec</td>
+            <td><strong>1.46x faster</strong></td>
+            <td>Loaded persisted TunableOp GEMM table; no online retuning</td>
+          </tr>
+          <tr>
+            <td><code>I2V</code></td>
+            <td>94.086 sec</td>
+            <td><strong>77.160 sec</strong></td>
+            <td>71.691 sec</td>
+            <td><strong>1.22x faster</strong></td>
+            <td>Loaded persisted TunableOp GEMM table; no online retuning</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">v2.1 uses <code>aotriton_tuned</code>: <code>PYTORCH_TUNABLEOP_TUNING=0</code> with the persisted <code>result/rocm_speed_matrix/tunableop_results0.csv</code>. The transformer implementation and ROCm kernel source were not changed; faster existing GEMM kernels are selected from the saved TunableOp table.</p>
+    </section>
+
+    <section class="section improvement-section">
+      <h2>v1からの改善</h2>
+      <div class="metric-grid">
+        <article>
+          <span>T2I cold v1</span>
+          <strong>974.611 sec</strong>
+        </article>
+        <article class="metric-good">
+          <span>T2I native cache</span>
+          <strong>27.136 sec</strong>
+        </article>
+        <article>
+          <span>T2V cold v1</span>
+          <strong>483.187 sec</strong>
+        </article>
+        <article class="metric-good">
+          <span>T2V warm + AOTriton</span>
+          <strong>46.925 sec</strong>
+        </article>
+        <article>
+          <span>I2V cold v1</span>
+          <strong>166.890 sec</strong>
+        </article>
+        <article class="metric-good">
+          <span>I2V warm + AOTriton</span>
+          <strong>94.086 sec</strong>
+        </article>
+        <article>
+          <span>Policy cold v1</span>
+          <strong>~1965 sec</strong>
+        </article>
+        <article>
+          <span>Policy AOTriton</span>
+          <strong>~1958 sec</strong>
+        </article>
+        <article class="metric-good">
+          <span>Policy v2.6 optimized</span>
+          <strong>41.224 sec</strong>
+        </article>
+      </div>
+
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>Mode</th>
+            <th>v1 cold</th>
+            <th>v1.1 warm measured</th>
+            <th>AOTriton warm measured</th>
+            <th>Improvement vs v1</th>
+            <th>Applied changes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>T2I</code></td>
+            <td>974.611 sec</td>
+            <td>206.367 sec</td>
+            <td><strong>27.136 sec</strong></td>
+            <td><strong>35.9x faster</strong></td>
+            <td>VAE warmup, first T2I run discarded, AOTriton, persisted TunableOp, Diffusers-native und branch cache</td>
+          </tr>
+          <tr>
+            <td><code>T2V</code></td>
+            <td>483.187 sec</td>
+            <td>56.120 sec</td>
+            <td><strong>46.925 sec</strong></td>
+            <td><strong>10.3x faster</strong></td>
+            <td>VAE warmup, first T2V run discarded, AOTriton</td>
+          </tr>
+          <tr>
+            <td><code>I2V</code></td>
+            <td>166.890 sec</td>
+            <td>167.219 sec</td>
+            <td><strong>94.086 sec</strong></td>
+            <td><strong>1.8x faster</strong></td>
+            <td>AOTriton transformer acceleration, measured run separation</td>
+          </tr>
+          <tr>
+            <td><code>Policy</code></td>
+            <td>~1965 sec</td>
+            <td>-</td>
+            <td><strong>41.66 sec</strong></td>
+            <td><strong>47.2x faster</strong></td>
+            <td>v2.7/v3.0 Optimized (HIP Graphs + TunableOp + Graph Break Elimination). VAE decode: 7.49s, sampling: 33.84s, save/postprocess: 0.33s. Output remains equivalent.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">v1.1 measured values use a resident pipeline: synthetic VAE warmup, one mode warmup run, then the second run as the benchmark value. Cold start and steady-state generation are shown separately.</p>
+    </section>
+
+    <section class="section">
+      <h2>v2 Bottlenecks</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Area</th>
+            <th>Current Bottleneck</th>
+            <th>Measured Signal</th>
+            <th>Next Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>T2I</code></td>
+            <td>Transformer forward</td>
+            <td>102.378 / 104.733 sec, 97.8%</td>
+            <td>Step/resolution reduction or transformer backend tuning</td>
+          </tr>
+          <tr>
+            <td><code>T2V</code></td>
+            <td>Transformer forward</td>
+            <td>41.530 / 46.925 sec, 88.5%</td>
+            <td>Step/frame reduction or transformer backend tuning</td>
+          </tr>
+          <tr>
+            <td><code>I2V</code></td>
+            <td>Transformer forward</td>
+            <td>88.623 / 94.086 sec, 94.2%</td>
+            <td>Step/frame reduction or transformer backend tuning</td>
+          </tr>
+          <tr>
+            <td><code>Policy</code></td>
+            <td>Sampling (freezing tuned) &amp; VAE decode</td>
+            <td>Decode: 7.372 sec, Sampling: 33.523 sec</td>
+            <td>Further 3D Conv optimization or TunableOp for policy samplers</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">v2 treats AOTriton + warm measured as the steady-state baseline. Cold start is still dominated by first VAE decode and should be hidden behind process warmup.</p>
+    </section>
+
+    <section class="section">
+      <h2>v2 Follow-up Results</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Result</th>
+            <th>Signal</th>
+            <th>Interpretation</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>T2I native cache</code></td>
+            <td><strong>27.136 sec</strong></td>
+            <td>transformer 24.837 sec; image SHA256 identical</td>
+            <td>3.26x faster than the previous T2I TunableOp best; fixed understanding-branch work is reused</td>
+          </tr>
+          <tr>
+            <td><code>I2V TunableOp</code></td>
+            <td><strong>77.083 sec</strong></td>
+            <td>transformer 71.621 sec</td>
+            <td>1.22x faster than AOTriton baseline</td>
+          </tr>
+          <tr>
+            <td><code>Policy rocprof</code></td>
+            <td><strong>1912.329 sec</strong></td>
+            <td>vision decode 1058.894 sec</td>
+            <td>VAE conv kernels dominate article-equivalent video + action output</td>
+          </tr>
+          <tr>
+            <td><code>Policy action-only</code></td>
+            <td><strong>770.385 sec</strong></td>
+            <td>decode 0.00012 sec, action JSON kept</td>
+            <td>Earlier single-run action-only value; warmup-excluded action-only is now 135.830 sec</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">rocprof aggregate stats include warmup windows. T2I aggregate kernel stats are therefore VAE-heavy; stage profile is used for measured transformer timing.</p>
+    </section>
+
+    <section class="section">
+      <h2>v2.1 GEMM Kernel Selection</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Mode</th>
+            <th>Baseline GEMM Time</th>
+            <th>Tuned GEMM Time</th>
+            <th>Kernel Selection</th>
+            <th>Operational Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>T2V</code></td>
+            <td>37.596 sec</td>
+            <td><strong>23.190 sec</strong></td>
+            <td><code>MT128x128x32</code> to <code>Bias...UserArgs_MT96x128x32</code> / <code>MT64x64x64</code></td>
+            <td>Persisted table reused successfully</td>
+          </tr>
+          <tr>
+            <td><code>I2V</code></td>
+            <td>69.619 sec</td>
+            <td><strong>51.852 sec</strong></td>
+            <td><code>MT128x128x32</code> to <code>Bias...UserArgs_MT96x128x32</code></td>
+            <td>Persisted table reused successfully</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">The saved table is tied to PyTorch, ROCm, gfx1151, dtype, and GEMM shapes. Retune after changing software versions, model, GPU arch, dtype, resolution, frames, or step-dependent shapes.</p>
+    </section>
+
+    <section class="section">
+      <h2>Article Benchmark Media</h2>
+      <div class="media-grid">
+        <article class="media-item">
+          <h3>Text-to-image: robotics lab</h3>
+          <img class="square-media" src="rocm_speed_matrix/aotriton_tuned/t2i_und_cache_warm_full/article_t2i_robotics_lab_960x960_s35_measured_r2.jpg" alt="Text-to-image robotics lab output">
+          <dl>
+            <div><dt>v1 Cold</dt><dd>974.611 sec</dd></div>
+            <div><dt>Current Best</dt><dd>27.136 sec</dd></div>
+            <div><dt>Article Gen Time</dt><dd>22 sec</dd></div>
+          </dl>
+          <dl>
+            <div><dt>Article Ratio</dt><dd>1.2x slower</dd></div>
+            <div><dt>v1 Improvement</dt><dd>35.9x faster</dd></div>
+            <div><dt>Steps</dt><dd>35</dd></div>
+          </dl>
+          <p class="note">Prompt source: article robotics lab scene sample. Diffusers-native und branch cache output is byte-identical to the previous best image.</p>
+          <a href="rocm_speed_matrix/aotriton_tuned/t2i_und_cache_warm_full/article_t2i_robotics_lab_960x960_s35_measured_r2.jpg">Open T2I image</a>
+        </article>
+
+        <article class="media-item">
+          <h3>Text-to-video: red cube grasp</h3>
+          <video controls preload="metadata">
+            <source src="rocm_speed_matrix/aotriton_tuned/t2v_article_warm_full/article_t2v_red_cube_256p_24f_s35.mp4" type="video/mp4">
+          </video>
+          <dl>
+            <div><dt>v1 Cold</dt><dd>483.187 sec</dd></div>
+            <div><dt>v2.1 Tuned</dt><dd>32.165 sec</dd></div>
+            <div><dt>Article Gen Time</dt><dd>22 sec</dd></div>
+          </dl>
+          <dl>
+            <div><dt>Article Ratio</dt><dd>1.5x slower</dd></div>
+            <div><dt>v1 Improvement</dt><dd>15.0x faster</dd></div>
+            <div><dt>Requested</dt><dd>24 frames</dd></div>
+          </dl>
+          <p class="note">Prompt source: article use case, robotic gripper grasps and slowly lifts a red cube. v2.1 uses persisted TunableOp GEMM selection.</p>
+          <a href="rocm_speed_matrix/aotriton_tuned/t2v_article_warm_full/article_t2v_red_cube_256p_24f_s35.mp4">Open T2V video</a>
+        </article>
+
+        <article class="media-item">
+          <h3>Image-to-video: robot arms sample</h3>
+          <video controls preload="metadata">
+            <source src="rocm_speed_matrix/aotriton_tuned/i2v_article_und_cache_warm_full/article_i2v_robot_arms_256p_24f_s35.mp4" type="video/mp4">
+          </video>
+          <dl>
+            <div><dt>v1 Cold</dt><dd>166.890 sec</dd></div>
+            <div><dt>v2.2 Native</dt><dd>25.045 sec</dd></div>
+            <div><dt>Article Gen Time</dt><dd>17 sec</dd></div>
+          </dl>
+          <dl>
+            <div><dt>Article Ratio</dt><dd>1.5x slower</dd></div>
+            <div><dt>v1 Improvement</dt><dd>6.7x faster</dd></div>
+            <div><dt>Requested</dt><dd>24 frames</dd></div>
+          </dl>
+          <p class="note">Input source: official Cosmos3 sample image and prompt. v2.2 uses Diffusers-native und branch cache plus persisted TunableOp GEMM selection. MP4 SHA256 is identical to the no-cache baseline.</p>
+          <a href="rocm_speed_matrix/aotriton_tuned/i2v_article_und_cache_warm_full/article_i2v_robot_arms_256p_24f_s35.mp4">Open I2V video</a>
+        </article>
+
+        <article class="media-item">
+          <h3>Policy Model: Bridge robot task</h3>
+          <video controls preload="metadata">
+            <source src="policy_v2_3_speedup/condition_cache_video_action_warm1/action_policy_robot/vision.mp4" type="video/mp4">
+          </video>
+          <dl>
+            <div><dt>ROCm Time</dt><dd>~1965 sec</dd></div>
+            <div><dt>Condition Cache</dt><dd>147.757 sec</dd></div>
+            <div><dt>Article Gen Time</dt><dd>21 sec</dd></div>
+          </dl>
+          <dl>
+            <div><dt>v2.6 Optimized</dt><dd>41.224 sec</dd></div>
+            <div><dt>Article Ratio</dt><dd>2.0x slower</dd></div>
+            <div><dt>Video</dt><dd>17 frames</dd></div>
+          </dl>
+          <p class="note">Input source: action_policy_robot.json, Bridge / LeRobot sample. Condition-cache video+action output is byte-identical to the no-cache Policy output; action JSON max_abs_diff is 0.0.</p>
+          <a href="policy_v2_3_speedup/condition_cache_video_action_warm1/action_policy_robot/sample_outputs.json">Open Policy outputs JSON</a>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Run Details</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Case</th>
+            <th>Input</th>
+            <th>Requested</th>
+            <th>Encoded Output</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>T2I</code></td>
+            <td><code>inputs/omni/t2i.json</code></td>
+            <td>960x960, 1 frame, 35 steps</td>
+            <td>960x960 JPEG</td>
+            <td>27.136 sec native cache / 88.344 sec previous best / 104.733 sec warm measured / 974.611 sec cold v1</td>
+          </tr>
+          <tr>
+            <td><code>T2V</code></td>
+            <td>Article red-cube grasp prompt</td>
+            <td>448x256, 24 frames, 12 fps, 35 steps</td>
+            <td>448x256, 21 frames, 1.75 sec</td>
+            <td>32.165 sec v2.1 tuned / 46.925 sec v2 warm / 483.187 sec cold v1</td>
+          </tr>
+          <tr>
+            <td><code>I2V</code></td>
+            <td><code>example_i2v_input.jpg</code> + <code>example_i2v_prompt.json</code></td>
+            <td>448x256, 24 frames, 12 fps, 35 steps</td>
+            <td>448x256, 21 frames, 1.75 sec</td>
+            <td>25.045 sec v2.2 native cache / 77.160 sec v2.1 tuned / 94.086 sec v2 warm / 166.890 sec cold v1</td>
+          </tr>
+          <tr>
+            <td><code>Policy</code></td>
+            <td><code>action_policy_robot.json</code> Bridge robot task</td>
+            <td>480 image size, 189 input frames, 30 steps</td>
+            <td>640x480, 17 frames, 3.4 sec + 16x10 actions</td>
+            <td>41.224 sec (v2.6 Policy CppWrapper &amp; StaticCompile) / 57.991 sec (v2.4 VAE compiled &amp; StreamK) / 61.220 sec (v2.4 VAE compiled) / 148.117 sec (v2.4 baseline) / ~1965 sec v1</td>
+          </tr>
+        </tbody>
+      </table>
+      <ul class="link-list benchmark-links">
+        <li><a href="classmethod_article_benchmark/summary.json">summary.json</a></li>
+        <li><a href="classmethod_article_benchmark/article_t2i_summary.json">article_t2i_summary.json</a></li>
+        <li><a href="classmethod_policy_framework/action_policy_robot/sample_outputs.json">policy sample_outputs.json</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-v1_1-optimization-plan.md">v1.1 ROCm optimization plan markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-v1_1-tech-validate-results.md">v1.1 tech validation results markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-v1_1-smoke-benchmark-results.md">v1.1 smoke benchmark results markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-v1_1-stage-profile-results.md">v1.1 stage profile results markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-v1_1-vae-decode-probe-results.md">v1.1 VAE decode probe results markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-v1_1-vae-warmup-probe-results.md">v1.1 VAE warmup probe results markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-v1_1-warm-full-benchmark-results.md">v1.1 warm full benchmark results markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-v1_1-t2i-policy-improvement-results.md">v1.1 T2I and Policy improvement results markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-v2-bottleneck-analysis.md">v2 bottleneck analysis markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-v2-hardware-bottleneck-results.md">v2 hardware bottleneck results markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-v2-rocprof-tunable-action-only-results.md">v2 rocprof, TunableOp, action-only results markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-v2-vae-conv-and-transformer-rocprof-deep-dive.md">v2 VAE conv and transformer-only rocprof deep dive markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-gemm-kernel-selection-deep-dive.md">v2.1 GEMM kernel selection deep dive markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-tunableop-persistence-results.md">v2.1 TunableOp persistence results markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-t2i-warmup-excluded-speed-deep-dive.md">T2I warmup-excluded speed deep dive markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-t2i-gemm-further-speedup-results.md">T2I GEMM further speedup results markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-t2i-streamk-tuned-full-result-and-next-plan.md">T2I Stream-K tuned full result and next plan markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-t2i-non-gemm-improvement-plan.md">T2I non-GEMM improvement investigation and plan markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-t2i-und-cache-full-results-and-post-cache-profile.md">T2I und cache full result and post-cache profile markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-i2v-und-branch-cache-diffusers-native.md">v2.2 Diffusers-native I2V cache markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-policy-warmup-excluded-deep-dive.md">Policy warmup-excluded deep dive markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-v2_3-policy-speedup-plan.md">v2.3 Policy speedup plan markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-v2_3-policy-condition-cache-results.md">v2.3 Policy condition cache results markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-v2_3-policy-vae-decode-and-velocity-speedup-plan.md">v2.3 Policy VAE decode and velocity speedup plan markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-v2_3-policy-deep-profile-results.md">v2.3 Policy deep profile results markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-v2_3-policy-decoder-block-and-velocity-rocprof-results.md">v2.3 Policy decoder block and velocity rocprof results markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-v2_3-policy-vae-upsamples3-and-velocity-gemm-deep-dive.md">v2.3 Policy VAE upsample[3] and velocity GEMM deep dive markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-v2_5-policy-caching-and-freezing-results.md">v2.5 Policy caching and freezing results markdown</a></li>
+        <li><a href="docs/cosmos3-rocm-v2_6-policy-cppwrapper-and-static-compile-results.md">v2.6 Policy CppWrapper and static compile results markdown</a></li>
+        <li><a href="rocm_speed_matrix/tunableop_results0.csv">v2.1 persisted TunableOp table</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-classmethod-article-speed-benchmark.md">Article speed benchmark markdown</a></li>
+        <li><a href="docs/cosmos3-nano-rocm-classmethod-usecase-results.md">Use case results markdown</a></li>
+      </ul>
+    </section>
+
+    <section class="section">
+      <h2>Reasoner Checks</h2>
+      <div class="text-result-grid">
+        <article>
+          <h3>Image-to-text plan</h3>
+          <p>Move the arm to the flower. Grasp the flower. Move the arm to the red bottle. Place the flower in the red bottle.</p>
+          <a href="reasoner/image_to_text_response.json">Open response JSON</a>
+        </article>
+        <article>
+          <h3>Full-frame video-to-text</h3>
+          <p>駐車場の上空から撮影された映像で、白い車が画面下部から上部へと移動し、その後に青い車と赤い車が画面下部から上部へと移動しています。</p>
+          <a href="reasoner/video_to_text_fullframes_ctx81920_response.json">Open response JSON</a>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Source Article Comparison</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Article</th>
+            <th>This ROCm Run</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Hardware</td>
+            <td>DGX Spark / CUDA</td>
+            <td>Ryzen AI Max+ 395 / gfx1151 / ROCm 7.2</td>
+          </tr>
+          <tr>
+            <td>T2I</td>
+            <td>960x960, 35 steps, generation time about 22 sec</td>
+            <td>960x960 JPEG, 27.136 sec native cache / 88.344 sec previous best / 104.733 sec warm measured / 974.611 sec cold v1</td>
+          </tr>
+          <tr>
+            <td>T2V</td>
+            <td>256p, 24 frames, 12 fps, generation time about 22 sec</td>
+            <td>448x256 requested 24 frames, encoded 21 frames, 32.165 sec v2.1 tuned / 46.925 sec v2 warm / 483.187 sec cold v1</td>
+          </tr>
+          <tr>
+            <td>I2V</td>
+            <td>Official sample, generation time about 17 sec</td>
+            <td>Official sample, encoded 21 frames, 25.045 sec v2.2 native cache / 77.160 sec v2.1 tuned / 94.086 sec v2 warm / 166.890 sec cold v1</td>
+          </tr>
+          <tr>
+            <td>Policy Model</td>
+            <td>640x480 x 17 frames + 16x10 action sequence, generation time about 21 sec</td>
+            <td>640x480 x 17 frames + 16x10 action sequence, 41.224 sec v2.6 Policy CppWrapper &amp; StaticCompile / 57.991 sec v2.4 VAE compiled &amp; StreamK / 61.220 sec v2.4 VAE compiled / 148.117 sec v2.4 baseline / ~1965 sec v1 via framework path</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">The article values of 22 sec, 17 sec, and 21 sec are generation times, not video durations. The generated T2V/I2V MP4 files in this ROCm run are 1.75 sec long because the benchmark requested 24 frames at 12 fps and the encoded output contains 21 frames. v2.6 uses CppWrapper and static-shape compilation (dynamic=False) in addition to v2.5's CPU-GPU input sequence caching, velocity cache, build_packed cache, and freezing = True for policy inference. v2.4 uses VAE upsample_3 compiled (Max-Autotune) &amp; StreamK optimization, GPU-side clamp/cast, VAE contiguous, MIOpen cache, and Diffusers-native und branch cache / condition-cache; T2V/I2V also use AOTriton, VAE/mode warmup, and a persisted TunableOp GEMM table.</p>
+      <p class="note">Reference: <a href="https://dev.classmethod.jp/articles/dgx-spark-cosmos3-omni-world-model-policy/">Classmethod article</a></p>
+    </section>
+  </main>
+</body>
+</html>
