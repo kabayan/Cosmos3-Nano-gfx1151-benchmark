@@ -1,0 +1,13 @@
+result/
+third_party/
+*.log
+*.so
+*.so.*
+__pycache__/
+.pytest_cache/
+tmp/
+.rocprofv3/
+*.jpg
+*.mp4
+tunableop_results*.csv
+tunableop_untuned*.csv

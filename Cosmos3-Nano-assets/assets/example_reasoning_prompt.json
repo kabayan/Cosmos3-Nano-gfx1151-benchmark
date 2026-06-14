@@ -1,0 +1,4 @@
+{
+  "prompt": "The task is to put flower into the red bottle. Generate a plan consisting of subtasks for accomplish the task.",
+  "max_tokens": 4096
+}

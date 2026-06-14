@@ -1,0 +1,34 @@
+diff --git a/projects/miopen/src/solver/conv/gemm_common.cpp b/projects/miopen/src/solver/conv/gemm_common.cpp
+index 84eadff..4606e4e 100644
+--- a/projects/miopen/src/solver/conv/gemm_common.cpp
++++ b/projects/miopen/src/solver/conv/gemm_common.cpp
+@@ -40,12 +40,17 @@
+ // Double the limit for FP32, for GemmFwdRest and GemmBwdRest solvers only.
+ // See issues #2789 and #2808.
+ //
++// Experiment: also allow a larger limit for FP16/BF16 rest-of GEMM solvers.
++// This validates large Cosmos3 Wan VAE 3D forward descriptors that currently
++// return workspace 0 and fall back to ConvDirectNaiveConvFwd.
++//
+ // IMPORTANT: The limit can only be increased for the "rest-of" kind GEMM solvers,
+ // since there are dependencies between the applicability of GEMM solvers.
+ // For example, expanding the applicability of GemmFwd1x1_0_1 will result
+ // in narrowing the applicability of GemmFwdRest. This side effect will
+ // lead to errors unless the databases are re-tuned.
+ MIOPEN_DECLARE_ENV_VAR_BOOL(MIOPEN_WORKAROUND_ISSUE_2789)
++MIOPEN_DECLARE_ENV_VAR_BOOL(MIOPEN_EXPERIMENT_LARGE_FP16_BF16_GEMM_REST)
+ 
+ namespace miopen {
+ namespace solver {
+@@ -64,6 +69,11 @@ std::size_t MaxMemAllocSz(const Handle& h,
+         if(problem.IsFp32() && double_limit_for_fp32)
+             limit *= 2;
+     }
++    if(!env::disabled(MIOPEN_EXPERIMENT_LARGE_FP16_BF16_GEMM_REST))
++    {
++        if((problem.IsFp16() || problem.IsBfp16()) && double_limit_for_fp32)
++            limit *= 2;
++    }
+     return std::min(m, limit);
+ #else
+     return m;
