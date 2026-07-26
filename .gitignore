@@ -11,3 +11,7 @@ tmp/
 *.mp4
 tunableop_results*.csv
 tunableop_untuned*.csv
+# CocoIndex Code (ccc)
+/.cocoindex_code/
+# ユーザーローカル設定（通知 URL 等、DLS protected_paths）
+.claude/settings.local.json
