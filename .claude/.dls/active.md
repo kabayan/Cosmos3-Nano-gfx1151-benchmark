@@ -20,6 +20,7 @@
   - SageAttention INT8 の本線導入（レポート §5-⑤）: 同じく計算内容を変えるため本線不可。品質差評価の対象にも現時点では含めない（gfx1151 未検証で導入コスト大）
 - **commits**:
   - baseline: b37cfb7
+  - impl: 51c1b4e
 - **assumption**: TeaCache 品質差評価は既存推論スクリプトへの非侵襲な追加（別ブランチ or フラグ分離）で実施でき、本線ベンチマーク環境を汚さない（confidence: high）
 
 ## DLS-002
@@ -42,6 +43,7 @@
   - vllm-omni の演算子融合転用: RDNA/gfx1151 での diffusion engine 動作報告が現時点で皆無のため dormant（RDNA 実証が出たら再評価）
 - **commits**:
   - baseline: b37cfb7
+  - impl: 51c1b4e
 - **assumption**: TeaCache 系の近似キャッシュが 2026-06-12 等価性判断①（クオリティ非劣化なら数%誤差許容）の範囲に収まる（confidence: medium。導入時に同一 seed 品質比較で検証する）
 
 ## DLS-001
@@ -62,4 +64,5 @@
   - 案C（何もしない / YAGNI）: 約 6 週間分の環境更新が「物理限界」結論に未反映のまま凍結されるため dormant
 - **commits**:
   - baseline: b37cfb7
+  - impl: 51c1b4e
 - **assumption**: ROCm / AOTriton の 2026-06-14 以降の更新に gfx1151 向け attention / GEMM の性能改善が含まれる（confidence: medium。調査自体がこの前提の検証を兼ねる）
