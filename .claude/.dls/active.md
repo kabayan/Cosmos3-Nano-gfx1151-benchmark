@@ -1,5 +1,53 @@
 # DLS active エントリ
 
+## DLS-006
+- **date**: 2026-07-26
+- **what**: Policy Model の対外比較の基準値を「論文値 29.00 秒」から参照記事の「モデル常駐後 21 秒」に是正し、目標（対記事 1.5 倍以内 = 31.5 秒）は未達（1.98 倍）と対外文書に明記する。実測側は生成時間 41.66 秒（サンプリング + デコード）を維持し、測定対象外の入力観測エンコード（conditioning、実測 81.57 秒）を参考値として併記する
+- **why**:
+  - origin: user_request
+  - business: 「元記事と同一条件での実測比較」が本プロジェクトの対外的価値であり、基準値に一次出典が無いまま目標達成を主張すると価値の土台が崩れる。基準が 21 → 29 秒に膨らむと目標ラインも 31.5 → 43.5 秒に緩み、未達が達成に見えていた
+  - constraint: 記事は「モデル常駐後 21 秒で出力」としか記載せず内訳（前処理 / サンプリング / デコード）が非公開。記事側が入力観測エンコードを含むか確認できないため、スコープ一致は推定に依存する
+- **where**: README.md §2（Policy 行と NOTE / IMPORTANT）、docs/cosmos3_rocm_policy_optimization_final_report.md §1 サマリー表・§3 結論、result/mainline_full_v4_20260726/policy_stage_sync_profile.json
+- **sources**: .claude/.dls/raw/20260726_doc_baseline_and_conditioning_audit.md
+- **requested_by**: ユーザー（案B' 選択 2026-07-26）
+- **depends_on**: DLS-005
+- **affects**: DLS-001（「対論文比 1.44 倍・目標達成済み」を前提に残余高速化余地を論じた再調査レポートの前提を、未達 1.98 倍に更新する）
+- **rejected_hypothesis**:
+  - target: docs/cosmos3_rocm_policy_optimization_final_report.md（2026-06-14 時点の結論）
+  - hypothesis: Policy Model は総実行時間 41.66 秒で対論文比 1.44 倍、目標 1.5 倍以内を達成した
+  - reason: 基準値 29.00 秒（= サンプリング 21.00 + デコード 8.00）に一次出典が無く、記事の 21 秒（総所要時間）をサンプリング単体と読み替えて構成された値であることをユーザー確認（2026-07-26）で確定。記事 21 秒基準では 1.98 倍で未達
+- **rejected_alternatives**:
+  - 案B（実測側も conditioning 込み 124.91 秒・5.95 倍に揃える）: conditioning 単体 81.57 秒が記事の総時間 21 秒を超えること、入力エンコードを持たない T2I / T2V / I2V の実測比が 1.2〜1.5 倍にとどまることから、記事の 21 秒も「生成のみ」と推定されるため土俵がずれる。dormant（記事側内訳が判明したら再評価）
+  - 案A（数値維持・脚注のみ）: 基準値に一次出典が無い問題が本文に残るため不採用
+  - 案C（何もしない）: 同じ数値を使うたびに問題が再燃するため不採用
+- **commits**:
+  - baseline: eed9aa0
+- **assumption**: 記事の「モデル常駐後 21 秒」は入力観測エンコードを含まない生成のみの値である（confidence: medium-high。記事内訳が非公開のため直接確認は不可。根拠は conditioning 81.57 秒 > 記事総時間 21 秒、および他 3 モードの実測比 1.2〜1.5 倍との整合。記事著者への確認や Cosmos 公式ベンチマークのスコープ判明時に再評価する）
+
+## DLS-005
+- **date**: 2026-07-26
+- **what**: 本線ベンチ headline 数値（`generate_batch` 41.66 秒）の再現には `--policy-condition-cache` の付与が必須であることを確定し、これを再現手順の正として記録する。同フラグ無しの測定値（322.21 秒）は測定プロトコル不一致による無効値として扱い、「環境退行が起きた」という仮説を棄却する
+- **why**:
+  - origin: implementation
+  - business: TeaCache 品質評価（DLS-004）の実験中に CC が「本線が 7.7 倍遅い」と誤報し、品質評価を中断して約 2 時間の調査を要した。原因は headline 数値の再現手順が repo に記録されていなかったこと。再現手順を DLS に残さないと同じ誤報が再発し、対論文比較というプロジェクト中核価値の信頼性が揺らぐ
+  - constraint: `--policy-condition-cache` は measured フェーズの conditioning を warmup 結果で置換するため、conditioning 実測約 81 秒が測定対象から外れる。元記事側が conditioning を含むか不明で、「同一条件比較」の妥当性は本エントリでは判定しない
+- **where**: scripts/run_cosmos_framework_policy_rocm.py（--policy-condition-cache、L234 / L258 / L309-318）、docs/cosmos3_rocm_policy_optimization_final_report.md（再現手順が未記載）、README.md（41.66 秒の対外主張）、result/mainline_repro_v3_20260726/、result/mainline_repro_20260726/
+- **sources**: .claude/.dls/raw/20260726_doc_mainline_repro_investigation.md
+- **requested_by**: ユーザー（「退行の根本原因調査を優先」2026-07-26）
+- **depends_on**: DLS-001
+- **affects**: DLS-004（品質評価 run は warmup なし単発のため、その所要時間を本線記録と比較してはならない）
+- **rejected_hypothesis**:
+  - target: （本セッションで CC が提示した仮説）
+  - hypothesis: ROCm / カーネル / PyTorch スタックの更新により本線推論経路が退行し、41.66 秒が再現しなくなった
+  - reason: `--policy-condition-cache` を付与した v3 run が 42.88 秒（記録比 +2.9%）で着地し記録を再現。加えてコード（script は 6/14 以降 266 行の純粋追加のみ、削除 0）、フレームワーク（temp_src 6/13 付）、Docker イメージ（Created 2026-01-22）がいずれも当時と同一であることを確認した
+- **rejected_alternatives**:
+  - TunableOp 表（tunableop_results00.csv）の適用を再現条件に含める: v3 が TunableOp 無しで 42.88 秒に到達したため 41.66 秒到達には不要。かつ `PYTORCH_TUNABLEOP_TUNING=0` での読み込みは `Expected iter != ops_.end()` でクラッシュする（最終報告 §④ の記載は TUNING=1）。dormant
+  - ROCm #5750（Strix Halo 低クロック張り付き）を原因とする: amd-smi 実測で SCLK 2899MHz（上限 2900MHz）、MCLK 1000MHz（3 段構成の最上位レベル）を確認し非該当
+  - ホストメモリ逼迫を原因とする: 長期起動コンテナ 7 個を停止し RAM 87GiB→15GiB 使用に解放した後も v1 相当の遅さは変わらず、フラグ付与で解消したため原因ではない
+- **commits**:
+  - baseline: eed9aa0
+- **assumption**: 41.66 秒と 42.88 秒の差（+2.9%、サンプリング 1.128→1.175 s/it）は run-to-run 変動の範囲であり環境劣化ではない（confidence: medium。ノイズフロア未測定のため、必要なら同条件 2 回実行で確認する）
+
 ## DLS-003
 - **date**: 2026-07-26
 - **what**: 計算省略系の高速化（TeaCache 等の近似キャッシュ、INT8 量子化 attention 含む）を対論文同一条件比較の本線から除外する。TeaCache は速度成果としてではなく「出力が非適用時とどの程度異なるか」の品質差定量評価のみ実施する
