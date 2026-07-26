@@ -8,7 +8,7 @@
   - business: 「元記事と同一条件での実測比較」が本プロジェクトの対外的価値であり、基準値に一次出典が無いまま目標達成を主張すると価値の土台が崩れる。基準が 21 → 29 秒に膨らむと目標ラインも 31.5 → 43.5 秒に緩み、未達が達成に見えていた
   - constraint: 記事は「モデル常駐後 21 秒で出力」としか記載せず内訳（前処理 / サンプリング / デコード）が非公開。記事側が入力観測エンコードを含むか確認できないため、スコープ一致は推定に依存する
 - **where**: README.md §2（Policy 行と NOTE / IMPORTANT）、docs/cosmos3_rocm_policy_optimization_final_report.md §1 サマリー表・§3 結論、result/mainline_full_v4_20260726/policy_stage_sync_profile.json
-- **sources**: .claude/.dls/raw/20260726_doc_baseline_and_conditioning_audit.md
+- **sources**: .claude/.dls/raw/20260726_doc_baseline_and_conditioning_audit.md、.claude/.dls/raw/20260726_chat_baseline_audit_and_scope_estimation.md
 - **requested_by**: ユーザー（案B' 選択 2026-07-26）
 - **depends_on**: DLS-005
 - **affects**: DLS-001（「対論文比 1.44 倍・目標達成済み」を前提に残余高速化余地を論じた再調査レポートの前提を、未達 1.98 倍に更新する）
@@ -32,7 +32,7 @@
   - business: TeaCache 品質評価（DLS-004）の実験中に CC が「本線が 7.7 倍遅い」と誤報し、品質評価を中断して約 2 時間の調査を要した。原因は headline 数値の再現手順が repo に記録されていなかったこと。再現手順を DLS に残さないと同じ誤報が再発し、対論文比較というプロジェクト中核価値の信頼性が揺らぐ
   - constraint: `--policy-condition-cache` は measured フェーズの conditioning を warmup 結果で置換するため、conditioning 実測約 81 秒が測定対象から外れる。元記事側が conditioning を含むか不明で、「同一条件比較」の妥当性は本エントリでは判定しない
 - **where**: scripts/run_cosmos_framework_policy_rocm.py（--policy-condition-cache、L234 / L258 / L309-318）、docs/cosmos3_rocm_policy_optimization_final_report.md（再現手順が未記載）、README.md（41.66 秒の対外主張）、result/mainline_repro_v3_20260726/、result/mainline_repro_20260726/
-- **sources**: .claude/.dls/raw/20260726_doc_mainline_repro_investigation.md
+- **sources**: .claude/.dls/raw/20260726_doc_mainline_repro_investigation.md、.claude/.dls/raw/20260726_chat_baseline_audit_and_scope_estimation.md
 - **requested_by**: ユーザー（「退行の根本原因調査を優先」2026-07-26）
 - **depends_on**: DLS-001
 - **affects**: DLS-004（品質評価 run は warmup なし単発のため、その所要時間を本線記録と比較してはならない）
