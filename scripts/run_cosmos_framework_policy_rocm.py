@@ -188,6 +188,7 @@ def _install_policy_hooks(
     roctx_vae_detail: bool,
     vae_conv_probe_path: str | None,
     vae_target_conv_channels_last: bool,
+    min_condition_encode: bool = False,
 ) -> None:
     import cosmos_framework.data.vfm.sequence_packing as sequence_packing
     import cosmos_framework.model.vfm.mot.attention as mot_attention
@@ -231,7 +232,13 @@ def _install_policy_hooks(
     sequence_packing.factored_from_joint_sequence = patched_factored_from_joint_sequence
     mot_attention.factored_from_joint_sequence = patched_factored_from_joint_sequence
 
-    if not profiler.enabled and not condition_cache and not roctx_network_forward and not roctx_vae_detail:
+    if (
+        not profiler.enabled
+        and not condition_cache
+        and not roctx_network_forward
+        and not roctx_vae_detail
+        and not min_condition_encode
+    ):
         return
 
 
@@ -249,6 +256,7 @@ def _install_policy_hooks(
     original_decode = omni_mot_model.OmniMoTModel.decode
     original_prepare_inference_data = omni_mot_model.OmniMoTModel._prepare_inference_data
     original_get_data_and_condition = omni_mot_model.OmniMoTModel.get_data_and_condition
+    original_encode = omni_mot_model.OmniMoTModel.encode
     original_normalize_video = omni_mot_model.OmniMoTModel._normalize_video_databatch_inplace
     original_normalize_action = omni_mot_model.OmniMoTModel._normalize_action_databatch
     original_maybe_upsample = omni_mot_model.OmniMoTModel._maybe_apply_prompt_upsampling
@@ -305,13 +313,57 @@ def _install_policy_hooks(
         with profiler.timed("prepare_inference_data_sync"):
             return original_prepare_inference_data(self, *args, **kwargs)
 
+    def _min_frame_encode(self, state):
+        """条件付けに必要な latent frame [0] のみを得るため先頭 1 ピクセルフレームだけをエンコードする。
+
+        policy の sequence_plan は condition_frame_indexes_vision=[0]
+        （cosmos_framework/data/vfm/action/transforms.py L296-299、実測で確認済み）。
+        latent frame 1 以降は omni_mot_model.py L1677 の
+        `noise = cond_mask * x0 + (1 - cond_mask) * pure_noise` で cond_mask=0 により
+        値が捨てられ shape だけが使われるため、複製で埋めてよい。
+        Wan2.2 VAE は因果構造（CausalConv3d + feat_cache）なので latent frame [0] は
+        先頭 1 フレームのみに依存し、17 フレーム版とのビット一致を実測済み（DLS-008）。
+        """
+        if state.ndim != 5 or state.shape[2] <= 1:
+            return original_encode(self, state)
+        head = original_encode(self, state[:, :, :1].contiguous())
+        tokenizer = getattr(self, "tokenizer_vision_gen", None)
+        tcf = int(getattr(tokenizer, "temporal_compression_factor", 4) or 4)
+        num_latent = (int(state.shape[2]) - 1 + tcf - 1) // tcf + 1
+        if num_latent <= 1:
+            return head
+        filler = head[:, :, -1:].expand(-1, -1, num_latent - 1, -1, -1)
+        return torch.cat([head, filler], dim=2).contiguous()
+
+    def _plan_allows_min_encode(data_batch: Any) -> bool:
+        """条件付けが latent frame [0] のみのときに限り最小エンコードを許可する。"""
+        if not isinstance(data_batch, dict):
+            return False
+        plans = data_batch.get("sequence_plan")
+        if not plans:
+            return False
+        return all(
+            list(getattr(plan, "condition_frame_indexes_vision", None) or []) == [0] for plan in plans
+        )
+
     def _profiled_get_data_and_condition(self, *args, **kwargs):
         if condition_cache and profiler.phase == "measured" and condition_cache_store["value"] is not None:
             condition_cache_store["reads"] += 1
             profiler.record("condition_cache_read", 0.0, reads=condition_cache_store["reads"])
             return condition_cache_store["value"]
-        with profiler.timed("get_data_and_condition_sync"):
-            result = original_get_data_and_condition(self, *args, **kwargs)
+        data_batch = args[0] if args else kwargs.get("data_batch")
+        use_min_encode = min_condition_encode and _plan_allows_min_encode(data_batch)
+        if min_condition_encode and not use_min_encode:
+            profiler.record("min_condition_encode_skipped", 0.0, reason="condition_frame_indexes_vision != [0]")
+        if use_min_encode:
+            omni_mot_model.OmniMoTModel.encode = _min_frame_encode
+        try:
+            with profiler.timed("get_data_and_condition_sync"):
+                result = original_get_data_and_condition(self, *args, **kwargs)
+        finally:
+            if use_min_encode:
+                omni_mot_model.OmniMoTModel.encode = original_encode
+                profiler.record("min_condition_encode_applied", 0.0)
         if condition_cache and profiler.phase == "warmup" and condition_cache_store["value"] is None:
             condition_cache_store["value"] = result
             condition_cache_store["writes"] += 1
@@ -970,6 +1022,15 @@ def main() -> None:
     parser.add_argument("--warmup-runs", type=int, default=0)
     parser.add_argument("--policy-sync-profile", action="store_true")
     parser.add_argument("--policy-condition-cache", action="store_true")
+    parser.add_argument(
+        "--policy-min-condition-encode",
+        action="store_true",
+        help=(
+            "conditioning の VAE エンコードを先頭 1 ピクセルフレームのみに絞る（DLS-008）。"
+            "policy は latent frame [0] のみを条件に使うため出力は不変。"
+            "sequence_plan の condition_frame_indexes_vision が [0] でない場合は自動で無効化する"
+        ),
+    )
     parser.add_argument("--policy-deep-profile", action="store_true")
     parser.add_argument("--policy-decoder-block-profile", action="store_true")
     parser.add_argument("--policy-decoder-upsample-detail-index", type=int, default=-1)
@@ -1004,6 +1065,7 @@ def main() -> None:
         args.policy_roctx_vae_detail,
         args.policy_vae_conv_probe_path,
         args.policy_vae_target_conv_channels_last,
+        args.policy_min_condition_encode,
     )
 
     original_generate_batch = OmniInference.generate_batch

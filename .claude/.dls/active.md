@@ -1,5 +1,52 @@
 # DLS active エントリ
 
+## DLS-008
+- **date**: 2026-07-27
+- **what**: Policy 推論の conditioning ステージ（実測 81.6 秒、conditioning 込み総時間 124.91 秒の 65%）のボトルネックを「推論に不要な 16 フレーム分の VAE エンコード」と特定する。policy が条件として使うのは latent frame [0] のみで、これはピクセルフレーム 1 枚のエンコードでビット一致で得られる。前セッションの仮説「入力観測動画の 189 フレーム全体をエンコードしている」は棄却する
+- **why**:
+  - origin: implementation
+  - business: DLS-006 で「conditioning 込み 124.91 秒」を対外文書に参考値として併記した。その 65% が推論結果に影響しない計算であることが分かれば、対外的に示せる正直な総時間が約 43 秒まで下がる。記事の 21 秒との比較可能性が変わる
+  - constraint: 削減は近似ではなく厳密（捨てられる latent は `cond_mask = 0` で 0 倍される）ため DLS-003 の計算省略系には該当しないが、改変対象が vendored なフレームワーク本体（temp_src / /tmp/cosmos-framework）であり、実施はユーザー判断を要する
+- **where**: temp_src/cosmos_framework/model/vfm/omni_mot_model.py（`get_data_and_condition` L2864-2866 の `self.encode`、`_get_inference_noise` L1667-1678 の `cond_mask` 適用）、temp_src/cosmos_framework/inference/action.py（`build_action_batch` L94-99 の `target_frames = action_chunk_size + 1`）、temp_src/cosmos_framework/data/vfm/action/transforms.py（`build_sequence_plan_from_mode` L296-299）、scripts/run_cosmos_framework_policy_rocm.py（モンキーパッチで実装する場合の適用先）、README.md / docs/cosmos3_rocm_policy_optimization_final_report.md（124.91 秒の記載）
+- **sources**: .claude/.dls/raw/20260727_doc_conditioning_probe_v2_measured.md, .claude/.dls/raw/20260727_doc_conditioning_probe_refutes_189frame_claim.md, .claude/.dls/raw/20260726_doc_conditioning_full_frame_encode_verification.md
+- **requested_by**: 自己判断（tasks/todo.md Active の未検証仮説 2 の検証として実行）
+- **depends_on**: DLS-005, DLS-006
+- **affects**: DLS-006（conditioning 込み総和 124.91 秒を参考値として併記する判断。削減を実施すれば約 43.0 秒に変わる）
+- **rejected_hypothesis**:
+  - target: （前セッションの未検証仮説 2。`.claude/.dls/raw/20260726_chat_baseline_audit_and_scope_estimation.md`）
+  - hypothesis: conditioning 81.57 秒 ÷ 0.43 秒/フレーム ≈ 189 フレーム。`get_data_and_condition` が入力観測動画の全 189 フレームを VAE エンコードしている
+  - reason: プローブ実測で encode 入力は `[1,3,17,544,736]` の 17 フレームと確定（`result/conditioning_probe_20260727/`）。policy は `inference.py` L513-517 で action 系モードとして早期 return し `build_action_batch`（`target_frames = action_chunk_size + 1 = 17`）を通るため、`num_frames=189` を使う `build_conditioned_video_batch` には到達しない。「0.43 秒/フレーム × 189」の一致は偶然で、実測は 5 フレーム 214.4 秒 > 17 フレーム 82.1 秒とフレーム数に線形ですらない
+- **rejected_alternatives**:
+  - 中間的なフレーム数（例: 5 フレーム）へ削る: 実測で 5 フレーム 214.4 秒 と 17 フレーム 82.1 秒 より 2.6 倍遅い。形状ごとの MIOpen アルゴリズム選択に支配されるため、フレーム数を減らせば速くなるという前提が成り立たない。dormant
+  - 静的コード読解のみで結論を出す: 同じ検証で 2 度（189 フレーム主張、latent 比較スライスの誤り）誤った。実測で分岐と形状が確定するまで結論を出さない
+- **commits**:
+  - baseline: ec21346
+- **assumption**: `x0_tokens_vision` の latent frame 1〜4 は推論時に shape のみが参照され値は読まれない（confidence: medium。`cond_mask = 0` による破棄は L1677 で確認したが、L649-657 / L849 / L1368 / L1824-1861 / L2004 / L2624 / L2743 の他参照は未精査。実装時に確認する）
+
+## DLS-007
+- **date**: 2026-07-27
+- **what**: README 公表値 T2I 27.136 秒 / T2V 32.165 秒 / I2V 25.045 秒 は現環境で再現すると確定し、訂正不要とする。あわせて diffusers 経路（T2I/T2V/I2V）の再現には TunableOp 調律表の読み込みが必須であることを再現手順の正として記録する。表を読み込まない測定値（T2I 32.641 / T2V 46.765 / I2V 31.837 秒）は測定プロトコル不一致による無効値として扱い、「環境退行が起きた」「diffusers の版差で遅くなった」の両仮説を棄却する
+- **why**:
+  - origin: implementation
+  - business: DLS-006 で Policy の対外比較を訂正した際、他 3 モードは未検証のまま残っていた。公表値が再現しないなら README の残り 3 行も訂正が必要になる。検証の結果は再現であり、対外文書の信頼性を追加の訂正なしに担保できる
+  - constraint: 記録 run の測定条件が repo に一元化されておらず、イメージ（`cosmos3-rocm72-diffusers:local`）・diffusers インストール抑止・variant `aotriton_tuned` の 3 つを揃えないと再現しない。特に summary の `tunableop_config.enabled` は CLI 引数のみを反映し環境変数 `PYTORCH_TUNABLEOP_ENABLED` を反映しないため（`configure_tunableop` L591-597）、記録側も `false` と表示され「表なしで測った」と誤読しうる
+- **where**: scripts/run_rocm_speed_matrix.py（`VARIANTS["aotriton_tuned"]`、`IMAGE`、`DIFFUSERS_INSTALL`）、scripts/benchmark_classmethod_article_t2i_rocm.py（L390-392 の hard fail、`configure_tunableop`）、scripts/benchmark_classmethod_article_t2v_i2v_rocm.py（同）、README.md §2（T2I/T2V/I2V 行）、result/rocm_speed_matrix/tunableop_results0.csv、result/verify_3modes_v3_20260726/
+- **sources**: .claude/.dls/raw/20260727_doc_3modes_repro_verification.md
+- **requested_by**: 自己判断（DLS-006 の派生タスクとして実行）
+- **depends_on**: DLS-005, DLS-006
+- **affects**: DLS-005（TunableOp 表を再現条件から外す判断の適用範囲を Policy 経路に限定する。diffusers 経路では必須）
+- **rejected_hypothesis**:
+  - target: （本セッションで CC が v2 run から提示しかけた仮説）
+  - hypothesis: T2I/T2V/I2V の transformer 順伝播が +22〜55% 退行した、ないし diffusers の版差（6 月パッチ版 → 7 月 git main）で遅くなった
+  - reason: variant `aotriton_tuned` 全体（TunableOp 表を含む）を適用した v3 が 3 モードとも記録比 ±0.6% で着地。加えて (1) 表なしでも `vae_decode` と VAE warmup は記録と一致しており環境全体の劣化と矛盾する、(2) I2V を 7 月 git main + prototype キャッシュ（26.592 秒）と 6 月パッチ版 + native キャッシュ（26.509 秒）で測ると差 0.3% で diffusers 版差は影響しない
+- **rejected_alternatives**:
+  - 既定イメージ + diffusers git main で検証する（v1 の方式）: T2I はパッチ API 不在で `RuntimeError: Transformer does not expose enable_und_branch_cache` により実行不能、pip が都度ネットワークに依存し DNS 失敗で T2V が落ちた。再現検証の手段として不適
+  - 記録イメージ + AOTriton のみ（v2 の方式）: TunableOp 表が効かず transformer_forward が +22〜55%。測定条件として無効
+  - 何もしない（公表値を未検証のまま残す）: DLS-006 で Policy の基準値に一次出典が無いと判明した直後であり、残り 3 行を未検証のまま対外主張し続けるのは同じ問題の再演になるため不採用
+- **commits**:
+  - baseline: ec21346
+- **assumption**: 各モード measured run 1 本ずつでノイズフロアは未測定だが、3 モードが独立に ±0.6% で一致し、モードごとに総時間 / transformer_forward / vae_decode / unattributed / VAE warmup が同時に一致しているため偶然ではない（confidence: high）
+
 ## DLS-006
 - **date**: 2026-07-26
 - **what**: Policy Model の対外比較の基準値を「論文値 29.00 秒」から参照記事の「モデル常駐後 21 秒」に是正し、目標（対記事 1.5 倍以内 = 31.5 秒）は未達（1.98 倍）と対外文書に明記する。実測側は生成時間 41.66 秒（サンプリング + デコード）を維持し、測定対象外の入力観測エンコード（conditioning、実測 81.57 秒）を参考値として併記する
@@ -35,7 +82,7 @@
 - **sources**: .claude/.dls/raw/20260726_doc_mainline_repro_investigation.md、.claude/.dls/raw/20260726_chat_baseline_audit_and_scope_estimation.md
 - **requested_by**: ユーザー（「退行の根本原因調査を優先」2026-07-26）
 - **depends_on**: DLS-001
-- **affects**: DLS-004（品質評価 run は warmup なし単発のため、その所要時間を本線記録と比較してはならない）
+- **affects**: DLS-004（品質評価 run は warmup なし単発のため、その所要時間を本線記録と比較してはならない）, DLS-007（TunableOp 表を再現条件から外す本エントリの判断は Policy 経路限定。diffusers 経路では必須）
 - **rejected_hypothesis**:
   - target: （本セッションで CC が提示した仮説）
   - hypothesis: ROCm / カーネル / PyTorch スタックの更新により本線推論経路が退行し、41.66 秒が再現しなくなった
