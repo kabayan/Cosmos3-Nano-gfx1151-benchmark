@@ -1,5 +1,75 @@
 # DLS active エントリ
 
+## DLS-012
+- **date**: 2026-07-27
+- **what**: golden MSE 不合格（DLS-011）の原因として最有力だった「ROCm スタックの数値精度差（AOTriton attention / MIOpen conv / hipBLASLt GEMM）」仮説を、fp32 感度実験 3 本（E1: attention、E2: VAE、E3: モデル全体）で棄却する。出力は全精度構成で run 間ノイズ帯（MSE ≤0.0086）の内側に留まり（全系 fp32 でも対 bf16 0.000478、グリッパー flip [6,7] 不変）、原因を「golden 生成環境（2026-05 内部コード・消滅した tokenizer pin a18b727）と公開コード・資産の意味論差」に絞る。決着には CUDA 参照 run（同一公開コード + 同一入力を CUDA GPU で 1 本）が必要
+- **why**:
+  - origin: implementation
+  - business: 数値精度が原因なら ROCm 移植の品質問題として対外報告と改修が必要だった。棄却されたことで「本環境の速度最適化・移植は品質に中立」という主張が精度側からも裏付けられ、残る問題は上流の版差に帰属する可能性が高くなった
+  - constraint: 公開リポジトリの CI は action golden を検証しておらず（smoke test は数値 golden 対象外と明記）、公開コードが May golden を再現する保証は元々無い。May 期の内部コードと tokenizer pin a18b727 は入手不能（HF 404）で、ローカルでの完全決着は不可能
+- **where**: scripts/run_cosmos_framework_policy_rocm.py（--policy-attn-fp32-math / --policy-vae-encode-fp32 / --policy-model-fp32、_sdpa_varlen_fallback_fp32_math / _install_vae_fp32 / _install_model_fp32）、result/attn_fp32_e1_20260727/、result/vae_fp32_e2_20260727/、result/model_fp32_e3_20260727/、/tmp/cosmos-framework/cosmos_framework/inference/configs/model/Cosmos3-Nano.yaml（tokenizer revision pin の変更箇所）
+- **sources**: .claude/.dls/raw/20260727_doc_policy_golden_mse_precision_sweep.md, .claude/.dls/raw/20260727_doc_policy_golden_mse_root_cause_analysis.md
+- **requested_by**: ユーザー（「そもそも精度が下回る原因をコードも含めて分析」→ E1 実行承認 2026-07-27）
+- **depends_on**: DLS-011
+- **affects**: DLS-011（assumption「原因は ROCm スタックの演算意味論ないし精度の系統差にある（confidence: low）」のうち精度側を実測で棄却。意味論差も E1 で fallback の正しさが実証されたため、残るは上流版差・入力側のみ）
+- **rejected_hypothesis**:
+  - target: DLS-011（assumption の原因候補リスト）
+  - hypothesis: AOTriton 実験 attention カーネル・MIOpen bf16 conv・hipBLASLt bf16 GEMM の数値精度差が 30 ステップで増幅し golden MSE 0.128 を生んでいる（カオス増幅説を含む）
+  - reason: E1（attention fp32 math、AOTriton 完全迂回）0.134 / E2（+VAE fp32）0.132 / E3（全系 fp32、precision torch.float32 をログ確認）0.1265 — いずれもベースライン帯 0.126〜0.134 から不動、flip [6,7] 固定、相互 MSE ≤0.008。精度をどう変えても計画が動かない以上、精度は原因ではない。カオス増幅説も「大きな精度摂動で軌道が動かない」ことと矛盾するため同時に棄却
+- **rejected_alternatives**:
+  - E2b（und vision tower の fp32 化）: policy 推論は視覚理解タワーを使わない（pixel_values 経路は reasoner テキスト生成専用）ことをコード実測で確認したため不要
+  - 外部記事を CUDA 参照として代用: RTX 5090 記事（zenn）は policy 未検証、L40S 記事（DevelopersIO 2026-07-03）は本文到達不能。dormant（記事側で golden 照合が公開されたら再評価）
+  - 何もしない（原因未特定のまま DLS-011 を閉じる）: README の「同一条件」主張の扱いを決めるには原因の帰属（ROCm 側か上流か）が必要なため不採用
+- **commits**:
+  - baseline: 9acedff
+- **assumption**: 公開コード（b3967db）を CUDA で実行しても golden を再現しない＝差は上流の版差である（confidence: medium。根拠は (1) 全精度で軌道不変、(2) 公開ウィンドウの diff に policy 経路の意味論変更なし、(3) CI が golden を検証していない。反証手段は CUDA 参照 run 1 本で、PASS なら ROCm 側に精度以外の意味論差が残ることになる）
+
+## DLS-011
+- **date**: 2026-07-27
+- **what**: Policy 出力が公式合格基準（golden action MSE < 0.05）を満たさないことを実測で確定する（全 11 run が 0.126〜0.134、記事報告値 0.013194 の約 10 倍）。あわせて「速度最適化（SDPA fallback・condition cache・min-condition-encode・HIP Graphs 等）が品質劣化を招いた」仮説を棄却する
+- **why**:
+  - origin: implementation
+  - business: README は「生成クオリティに関わる条件を一切変更していない」ことを対外価値の土台にしているが、出力が公式合格基準を満たさない状態で速度だけを比較していたことになる。速度数値の対外主張の前提に関わる
+  - constraint: run 間 pairwise MSE は最大 0.0086（55 ペア全列挙）で、golden との差 0.12 はその 14 倍。乱数変動では説明できない系統差。原因は本エントリ時点で未特定
+- **where**: result/*/action_policy_robot/sample_outputs.json（全 11 run）、/tmp/cosmos-framework/cosmos_framework/inference/metrics.py（compute_action_mse L477）、inputs/omni/action_policy_robot.json（golden_action_path / golden_mse_max）、README.md §2 NOTE、scripts/run_cosmos_framework_policy_rocm.py（_sdpa_varlen_fallback）
+- **sources**: .claude/.dls/raw/20260727_doc_policy_golden_mse_verification.md, .claude/.dls/raw/20260727_doc_policy_golden_mse_root_cause_analysis.md
+- **requested_by**: ユーザー（「golden MSE の照合を先にやって」2026-07-27）
+- **depends_on**: DLS-005, DLS-006, DLS-010
+- **affects**: DLS-006（対記事 1.98 倍の速度比較は「品質合格を満たす出力同士の比較」ではないという留保が付く）, DLS-009（等価性実証の価値は保持: 最適化前後で MSE 帯が同一 = 最適化は品質に中立、の実証を兼ねる）
+- **rejected_hypothesis**:
+  - target: （本セッションで検討した原因仮説）
+  - hypothesis: 速度最適化（SDPA fallback / condition cache / min-condition-encode / HIP Graphs / TunableOp）が golden MSE 不合格の原因である
+  - reason: 最適化導入前の 6/1 相当 run（1965 秒、classmethod_policy_framework）が既に 0.126471 で、最適化後の全 run（0.127〜0.134）と同帯。誤差は最適化前から一貫して存在する。数値精度差（fp16 説）も棄却: run ログ実測で Policy 経路は記事と同じ bfloat16。NATTEN sparsity 差も棄却: config 実測で two_way / natten_parameter_list None のため sparsity は元々無効
+- **rejected_alternatives**:
+  - グリッパータイミング（step 6 vs 8 の 2 ステップ差、dim9 MSE 0.507 = 全体の 40%）だけを原因とみなす: グリッパーを除く dims0-8 でも MSE 0.084〜0.086 で合格ライン超過のため説明として不十分。dormant（原因分析の一要素としては保持）
+  - 何もしない（照合せず速度比較のみ続ける）: 6 月 doc の残課題として明記されており、記事が合否基準まで公表している以上、未照合のまま「同一条件」を主張し続けるのは DLS-006 型の問題の再演になるため不採用
+- **commits**:
+  - baseline: 9acedff
+- **assumption**: 原因は ROCm スタックの演算意味論ないし精度の系統差（SDPA varlen fallback / AOTriton experimental / MIOpen conv / チェックポイント版差 / action 正規化統計のいずれか）にある（confidence: low。切り分け未実施。記事は GB10 で golden に 0.013 まで一致しており、正しいスタックでは軌道が数値差に頑健と考えられるため、カオス増幅説より系統差説を優先する）
+
+## DLS-010
+- **date**: 2026-07-27
+- **what**: 対外比較 4 モードの条件監査を実施し、(1) T2I/T2V/I2V の測定が guidance 1.0（CFG 無効 = 公式デフォルト T2I 4.0 / T2V・I2V 6.0 の約半分の transformer 計算量）で行われていること、(2) 記事は公式サンプル JSON をそのまま実行しており記事側条件は公式デフォルトから復元可能なこと、を特定する。「T2V の steps は記事に記載が無い」（本セッション前半の WebFetch 要約に基づく誤り）を棄却する
+- **why**:
+  - origin: user_request
+  - business: 「記事と同一条件」が本プロジェクトの対外価値の土台であり、guidance は生成品質と計算量の両方に直結する。公式デフォルトと不一致のまま倍率（1.23x/1.46x/1.47x)を主張すると、記事側が公式デフォルトで実行していた場合に約半分の計算量での比較になり成立しない
+  - constraint: 記事は「正式リリース前の検証版」で、当時のデフォルトが現行と同一の保証はない（記事の T2I 35 steps は現行 framework デフォルト 50 と食い違い、diffusers 既定 35 とは一致する）。guidance の決着には --guidance 6.0 実測（transformer_forward が約 2 倍になるか）が必要で未実施
+- **where**: cosmos_framework/inference/defaults/*/sample_args.json（公式デフォルト）、third_party/diffusers/src/diffusers/pipelines/cosmos/pipeline_cosmos3_omni.py（L1192-1206）、scripts/benchmark_classmethod_article_t2i_rocm.py・benchmark_classmethod_article_t2v_i2v_rocm.py（--guidance 既定 1.0、ARTICLE_T2V_PROMPT、ASSET_DIR）、result/verify_3modes_v3_20260726/（guidance 1.0 の実測記録）、README.md §2（倍率と NOTE）
+- **sources**: .claude/.dls/raw/20260727_doc_article_conditions_and_official_defaults_audit.md
+- **requested_by**: ユーザー（3 軸監査の指示、および「公式リポジトリの評価スクリプトを見れば分かることがあるのでは」2026-07-27）
+- **depends_on**: DLS-006, DLS-007
+- **affects**: DLS-007（公表値 3 モードの「再現」は guidance 1.0 という同一条件内での再現であり、記事条件との一致とは別問題という限定が付く）
+- **rejected_hypothesis**:
+  - target: （本セッション前半の CC 報告）
+  - hypothesis: 記事に T2V の denoising steps は記載されておらず、35 は本プロジェクトの仮定である
+  - reason: WebFetch 要約 2 回が記事まとめ行を拾わなかったことによる誤り。curl での原文直接取得により「text-to-image / text-to-video / image-to-video は、35 ステップ・22 秒前後で実用品質の出力が得られた」を確認。3 モードとも steps=35 は記事準拠
+- **rejected_alternatives**:
+  - guidance 1.0 を記事と同一条件とみなし続ける: docs/ 全文検索で採用根拠の記録が無く、公式デフォルト（4.0/6.0）とも不一致。無根拠のまま維持は不可
+  - 即座に README の倍率を訂正する: 記事側 guidance が検証版デフォルト不明のため確定できず、訂正の方向（本環境を 6.0 で再測定するか、条件差を注記するか）はユーザー判断と実測を待つ。dormant
+- **commits**:
+  - baseline: 9acedff
+- **assumption**: 記事は公式デフォルト guidance（T2I 4.0 / T2V・I2V 6.0 相当）で実行した（confidence: medium。根拠は「公式サンプルの JSON を指定するだけ」の明言と golden_mse_max 0.05 の一致による公式サンプル使用の確証。反証の余地は検証版デフォルトが現行と異なる可能性。--guidance 6.0 の実測とあわせて再評価する）
+
 ## DLS-009
 - **date**: 2026-07-27
 - **what**: `--policy-min-condition-encode` の等価性を「E2E 生成物の bit 一致」で判定する方針を棄却し、判定点をサンプリング入力（`initial_noise`）に移してビット一致を実証する。あわせて本環境には同一条件でも run-to-run 非決定性が存在し、そのフロアが本フラグ由来の差より大きいことを測定値として確定する。「v5 の出力差は最小エンコードの実装誤りに由来する」仮説を棄却する

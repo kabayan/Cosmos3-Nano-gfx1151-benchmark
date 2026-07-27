@@ -83,6 +83,152 @@ def _sdpa_varlen_fallback(
     return out_3d.unsqueeze(0)
 
 
+def _sdpa_math_fp32(q, k, v, *, is_causal, scale):
+    """fp32 アップキャスト + SDPA math backend（切り分け実験 E1 / DLS-011 用）。
+
+    入力は [B,H,S,D]。AOTriton 系カーネルを完全に迂回し、数値基準となる
+    素朴な attention（fp32 蓄積・逐次 softmax）で計算する。GQA は明示的に
+    KV ヘッドを展開して math backend でも同一意味論にする。
+    """
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+
+    q32 = q.to(torch.float32)
+    k32 = k.to(torch.float32)
+    v32 = v.to(torch.float32)
+    if q32.shape[1] != k32.shape[1]:
+        rep = q32.shape[1] // k32.shape[1]
+        k32 = k32.repeat_interleave(rep, dim=1)
+        v32 = v32.repeat_interleave(rep, dim=1)
+    with sdpa_kernel([SDPBackend.MATH]):
+        out = F.scaled_dot_product_attention(q32, k32, v32, is_causal=is_causal, scale=scale)
+    return out.to(q.dtype)
+
+
+def _sdpa_varlen_fallback_fp32_math(
+    query,
+    key,
+    value,
+    is_causal=False,
+    causal_type=None,
+    scale=None,
+    seqlens_Q=None,
+    seqlens_KV=None,
+    cumulative_seqlen_Q=None,
+    cumulative_seqlen_KV=None,
+    max_seqlen_Q=None,
+    max_seqlen_KV=None,
+    backend=None,
+    return_lse=False,
+    backend_kwargs=None,
+    deterministic=False,
+):
+    """--policy-attn-fp32-math: _sdpa_varlen_fallback と同一シグネチャの高精度版。
+
+    dense / varlen の両経路を fp32 math SDPA に落とす。varlen はセグメントごとに
+    等長 self-attention なので、cumulative_seqlen でスライスして個別に計算する。
+    """
+    del seqlens_Q, seqlens_KV, backend, backend_kwargs, deterministic, max_seqlen_Q, max_seqlen_KV
+    if return_lse:
+        raise NotImplementedError("SDPA fallback does not return LSE")
+    if query.shape[0] != 1 or key.shape[0] != 1 or value.shape[0] != 1:
+        raise NotImplementedError("SDPA fallback only handles packed batch dimension 1")
+
+    if scale is None:
+        scale = query.shape[-1] ** -0.5
+
+    if cumulative_seqlen_Q is None:
+        out = _sdpa_math_fp32(
+            query.permute(0, 2, 1, 3),
+            key.permute(0, 2, 1, 3),
+            value.permute(0, 2, 1, 3),
+            is_causal=is_causal,
+            scale=scale,
+        )
+        return out.permute(0, 2, 1, 3)
+
+    cum_q = cumulative_seqlen_Q.tolist()
+    cum_kv = cumulative_seqlen_KV.tolist()
+    assert len(cum_q) == len(cum_kv), "varlen segment counts must match"
+    q_3d = query.squeeze(0)
+    k_3d = key.squeeze(0)
+    v_3d = value.squeeze(0)
+    outs = []
+    for i in range(len(cum_q) - 1):
+        qs, qe = cum_q[i], cum_q[i + 1]
+        ks, ke = cum_kv[i], cum_kv[i + 1]
+        if is_causal and (qe - qs) != (ke - ks):
+            # TopLeft/BottomRight の整合が要る形状は本経路に現れない想定。黙って誤るより落とす
+            raise NotImplementedError("fp32-math fallback: causal segment with seqlen_q != seqlen_kv")
+        # [S,H,D] -> [1,H,S,D]
+        q_seg = q_3d[qs:qe].permute(1, 0, 2).unsqueeze(0)
+        k_seg = k_3d[ks:ke].permute(1, 0, 2).unsqueeze(0)
+        v_seg = v_3d[ks:ke].permute(1, 0, 2).unsqueeze(0)
+        out_seg = _sdpa_math_fp32(q_seg, k_seg, v_seg, is_causal=is_causal, scale=scale)
+        outs.append(out_seg.squeeze(0).permute(1, 0, 2))  # -> [S,H,D]
+    return torch.cat(outs, dim=0).unsqueeze(0)
+
+
+def _install_vae_fp32() -> None:
+    """--policy-vae-encode-fp32: Wan VAE を fp32 実行にする（切り分け実験 E2 / DLS-011）。
+
+    Wan2pt2VAEInterface.encode / decode の初回呼び出しで内側 WanVAE の重み・scale・
+    dtype を float32 へ変換する（遅延変換にするのはインターフェース生成タイミングに
+    依存しないため）。encode 入力は WanVAE.encode 内で self.dtype (=fp32) に揃い、
+    latent は in_dtype (bf16) に戻されるため、モデル側の他経路は不変。
+    """
+    from cosmos_framework.model.vfm.tokenizers import wan2pt2_vae_4x16x16 as wan_mod
+
+    def _ensure_fp32(interface) -> None:
+        wan = interface.model
+        if wan.dtype != torch.float32:
+            wan.model = wan.model.float()
+            wan.scale = (wan.scale[0].float(), wan.scale[1].float())
+            wan.dtype = torch.float32
+            print("[E2] Wan VAE -> fp32 (weights / scale / dtype)", flush=True)
+
+    original_encode = wan_mod.Wan2pt2VAEInterface.encode
+    original_decode = wan_mod.Wan2pt2VAEInterface.decode
+
+    def _fp32_encode(self, state):
+        _ensure_fp32(self)
+        return original_encode(self, state)
+
+    def _fp32_decode(self, latent):
+        _ensure_fp32(self)
+        return original_decode(self, latent)
+
+    wan_mod.Wan2pt2VAEInterface.encode = _fp32_encode
+    wan_mod.Wan2pt2VAEInterface.decode = _fp32_decode
+
+
+def _install_model_fp32() -> None:
+    """--policy-model-fp32: モデル本体を float32 で構築する（切り分け実験 E3 / DLS-011）。
+
+    SetupArgs.load_model_config_dict の戻り値で config.precision を float32 に
+    差し替える。OmniMoTModel.set_precision がこれを読んで重み・tensor_kwargs を
+    fp32 化するため、GEMM / RMSNorm / rope を含む transformer 全体が fp32 になる。
+    flash 系 attention カーネルは fp32 非対応のため --policy-attn-fp32-math と
+    併用すること。
+    """
+    from cosmos_framework.inference.common import args as common_args
+
+    owner = None
+    for obj in vars(common_args).values():
+        if isinstance(obj, type) and "load_model_config_dict" in vars(obj):
+            owner = obj
+            break
+    assert owner is not None, "load_model_config_dict を持つクラスが見つからない"
+    original = owner.load_model_config_dict
+
+    def _fp32_config(self):
+        model_dict = original(self)
+        model_dict["config"]["precision"] = "float32"
+        print("[E3] model precision -> float32", flush=True)
+        return model_dict
+
+    owner.load_model_config_dict = _fp32_config
+
+
 
 def _clone_batch_for_warmup(value: Any) -> Any:
     if isinstance(value, torch.Tensor):
@@ -1038,7 +1184,27 @@ def main() -> None:
     parser.add_argument("--policy-roctx-vae-detail", action="store_true")
     parser.add_argument("--policy-vae-conv-probe-path", default=None)
     parser.add_argument("--policy-vae-target-conv-channels-last", action="store_true")
+    parser.add_argument(
+        "--policy-attn-fp32-math",
+        action="store_true",
+        help="切り分け実験 E1 (DLS-011): 全 attention を fp32 + SDPA math backend で計算し"
+        " AOTriton 系カーネルを迂回する。速度測定には使用しないこと",
+    )
+    parser.add_argument(
+        "--policy-vae-encode-fp32",
+        action="store_true",
+        help="切り分け実験 E2 (DLS-011): Wan VAE を fp32 で実行し MIOpen bf16 conv を迂回する"
+        "（conditioning latent の精度切り分け）。速度測定には使用しないこと",
+    )
+    parser.add_argument(
+        "--policy-model-fp32",
+        action="store_true",
+        help="切り分け実験 E3 (DLS-011): モデル本体を float32 で構築する（GEMM 含む全演算の"
+        "精度切り分け）。--policy-attn-fp32-math と併用必須。速度測定には使用しないこと",
+    )
     args = parser.parse_args()
+    if args.policy_model_fp32 and not args.policy_attn_fp32_math:
+        parser.error("--policy-model-fp32 は --policy-attn-fp32-math と併用してください（flash 系は fp32 非対応）")
 
     os.environ.setdefault("COSMOS_TRAINING", "0")
     os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
@@ -1048,8 +1214,17 @@ def main() -> None:
     from cosmos_framework.inference import args as inference_args
     from cosmos_framework.scripts import inference
 
-    attention_frontend.attention = _sdpa_varlen_fallback
-    attention_pkg.attention = _sdpa_varlen_fallback
+    attention_impl = _sdpa_varlen_fallback_fp32_math if args.policy_attn_fp32_math else _sdpa_varlen_fallback
+    if args.policy_attn_fp32_math:
+        print("[E1] attention = fp32 + SDPA math backend (DLS-011 切り分け実験)", flush=True)
+    attention_frontend.attention = attention_impl
+    attention_pkg.attention = attention_impl
+    if args.policy_vae_encode_fp32:
+        print("[E2] Wan VAE = fp32 (DLS-011 切り分け実験)", flush=True)
+        _install_vae_fp32()
+    if args.policy_model_fp32:
+        print("[E3] model = fp32 (DLS-011 切り分け実験)", flush=True)
+        _install_model_fp32()
     inference_args._get_device_memory_bytes = lambda: 120 * 1024**3
 
     from cosmos_framework.inference.inference import OmniInference
