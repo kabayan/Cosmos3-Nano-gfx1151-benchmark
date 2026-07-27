@@ -1,5 +1,29 @@
 # DLS active エントリ
 
+## DLS-009
+- **date**: 2026-07-27
+- **what**: `--policy-min-condition-encode` の等価性を「E2E 生成物の bit 一致」で判定する方針を棄却し、判定点をサンプリング入力（`initial_noise`）に移してビット一致を実証する。あわせて本環境には同一条件でも run-to-run 非決定性が存在し、そのフロアが本フラグ由来の差より大きいことを測定値として確定する。「v5 の出力差は最小エンコードの実装誤りに由来する」仮説を棄却する
+- **why**:
+  - origin: implementation
+  - business: DLS-008 の削減（`generate_batch` 124.906 → 42.438 秒）を対外文書に反映できるかは等価性の証明にかかっている。bit 一致を基準に置いたままでは永久に未達で、実装を疑い続けて手戻りが発生する。判定点を移したことで厳密性の主張が可能になり、conditioning 込みの正直な総時間を約 42 秒として示せる
+  - constraint: 非決定性フロア（フラグ無し同士 v4 vs v6: action mean_abs_diff 0.026755 / max 0.4328）が本フラグ由来の差（v4 vs v5: 0.013901 / 0.1557）より大きい。E2E 出力での等価判定は原理的に不可能。判定は決定的な中間点でしか行えない
+- **where**: scripts/run_cosmos_framework_policy_rocm.py（`--policy-min-condition-encode`、`_min_frame_encode`）、temp_src/cosmos_framework/model/vfm/omni_mot_model.py（`_prepare_inference_data` L1577-1776 の戻り値 `initial_noise`、L1667-1678 の `cond_mask` 適用）、temp_src/cosmos_framework/inference/inference.py（`_fallback_seed` L157-170 / L1393）、README.md §2（Policy 行の入力観測エンコードと IMPORTANT）、docs/cosmos3_rocm_policy_optimization_final_report.md（§1 サマリー表・IMPORTANT・§3 結論）、result/mincond_v5_20260727/、result/control_v6_20260727/、result/conditioning_probe_v3_20260727/、tasks/todo.md（無効だった判定基準の記載元）
+- **sources**: .claude/.dls/raw/20260727_doc_mincond_e2e_verification_and_nondeterminism_floor.md
+- **requested_by**: 自己判断（tasks/todo.md Active 最上位に定めた切り分け手順に従って実行）。対外文書への反映方針はユーザー選択（2026-07-27、「42.44 秒に更新し根拠を注記」）
+- **depends_on**: DLS-008
+- **affects**: DLS-008（assumption「latent frame 1〜4 は値が読まれない」を静的読解ベースから実測確定に更新する。E2E 未検証という留保も解消）, DLS-006（conditioning 込み参考値を 124.91 → 42.44 秒に更新。あわせて「記事の 21 秒は生成のみ」という推定の重要度が下がった。削減後は conditioning が 0.28 秒で、記事側が含む / 含まないのどちらでも比較結果が実質変わらないため、DLS-006 の assumption が外れても結論は揺るがない）, DLS-003（本フラグは近似ではなく厳密であり計算省略系に該当しないことを確定）
+- **rejected_hypothesis**:
+  - target: （本セッションで CC が v5 の出力不一致から立てかけた仮説）
+  - hypothesis: v5 の生成物が基準 v4 と一致しないのは `_min_frame_encode` の実装誤り（latent frame 1〜4 の複製が推論結果に影響している）による
+  - reason: (1) フラグ無し・同一条件の対照 run v6 も v4 と不一致で、その差（mean_abs_diff 0.026755）はフラグ有無の差（0.013901）より大きい。(2) 同一プロセス内プローブで `initial_noise` が通常エンコードと最小エンコードでビット完全一致（max_abs_diff 0.0）。同プローブで通常エンコード 2 回同士もビット一致しており比較の土台が成立している。(3) `x0_tokens_vision` は latent frame 1〜4 が max_abs_diff 4.08〜4.97 で実際に大きく異なるのに `initial_noise` が一致するため、当該フレームがサンプリング入力に到達しないことの直接証明になる
+- **rejected_alternatives**:
+  - E2E 出力（`vision.mp4` md5 / action 160 要素）の bit 一致を等価性の判定基準として使い続ける: 非決定性フロアの方が大きく原理的に達成不可能。dormant（決定的実行が可能になったら再評価）
+  - E2E 出力差を許容閾値で判定する: 閾値の一次的根拠が無く、実装誤りと非決定性を識別できない。判定として空転する。dormant
+  - 何もしない（E2E 未検証のまま DLS-008 の推定値を使う）: 一次的な裏付けの無い数値を対外主張していた DLS-006 の問題の再演になるため不採用
+- **commits**:
+  - baseline: 25166c3
+- **assumption**: プローブ v3 の A vs C ビット一致（プロセス内決定性）は 1 回の測定であり、あらゆる実行で成り立つことは示していない（confidence: high。`initial_noise` までの経路は VAE encode + `arch_invariant_rand` + 乗加算のみで、サンプリングのような 30 ステップの反復や非決定的 reduction の蓄積が無い）
+
 ## DLS-008
 - **date**: 2026-07-27
 - **what**: Policy 推論の conditioning ステージ（実測 81.6 秒、conditioning 込み総時間 124.91 秒の 65%）のボトルネックを「推論に不要な 16 フレーム分の VAE エンコード」と特定する。policy が条件として使うのは latent frame [0] のみで、これはピクセルフレーム 1 枚のエンコードでビット一致で得られる。前セッションの仮説「入力観測動画の 189 フレーム全体をエンコードしている」は棄却する
@@ -21,7 +45,8 @@
   - 静的コード読解のみで結論を出す: 同じ検証で 2 度（189 フレーム主張、latent 比較スライスの誤り）誤った。実測で分岐と形状が確定するまで結論を出さない
 - **commits**:
   - baseline: ec21346
-- **assumption**: `x0_tokens_vision` の latent frame 1〜4 は推論時に shape のみが参照され値は読まれない（confidence: medium。`cond_mask = 0` による破棄は L1677 で確認したが、L649-657 / L849 / L1368 / L1824-1861 / L2004 / L2624 / L2743 の他参照は未精査。実装時に確認する）
+  - impl: 25166c3
+- **assumption**: `x0_tokens_vision` の latent frame 1〜4 は推論時に shape のみが参照され値は読まれない（confidence: high。実装時に全参照箇所を精査し、値を読むのは L1677 の `cond_mask * x0` のみと確認した。L649 / L849 は `training_step`、L1368 は `_add_noise_to_input` で学習経路のため推論では実行されない。L1831 `_get_velocity` / L2624 `generate_samples_from_batch` は `.shape` のみ、L2743 `_slice_gen_data_clean` はリストスライスのみ）。ただしエンドツーエンドでの出力一致は未検証（`result/mincond_v5_20260727/` の run が実行中）
 
 ## DLS-007
 - **date**: 2026-07-27
