@@ -1,9 +1,10 @@
 # 次のセッションへの引き継ぎ
 
-> 作成日時: 2026-07-27 08:05
-> 前セッションの要約: `--policy-min-condition-encode`（DLS-008）の E2E 検証を完了。速度削減は再現し
-> （`generate_batch` 124.91 → 42.44 秒）、等価性はサンプリング入力のビット一致で実証した（DLS-009）。
-> 対外文書（README / 最終報告）を 42.44 秒に更新済み。バックグラウンド run は残っていない。
+> 作成日時: 2026-07-27 13:11
+> 前セッションの要約: 4 モードの対外比較条件を監査し（DLS-010: guidance 1.0 vs 公式デフォルト
+> 4.0/6.0 の不一致を発見）、Policy 出力を公式 golden と照合して全 run 不合格を確定（DLS-011:
+> MSE 0.126〜0.134 vs 合格 0.05）。fp32 感度実験 E1〜E3 で ROCm 数値精度仮説を全棄却し（DLS-012）、
+> 原因を上流の版差・入力差に絞った。コミット済み（`7215021`）。
 
 DLS-123: 本ファイルは **文脈・状態の運搬** に専念する。タスク本体は `tasks/todo.md` の
 `Active` セクションに一元化する。
@@ -12,78 +13,55 @@ DLS-123: 本ファイルは **文脈・状態の運搬** に専念する。タ�
 
 ## 現在の状態
 
-**実行中のバックグラウンド run は無い。** conditioning 最適化の一連の作業は完了・コミット済み。
+**実行中のバックグラウンド run は無い。** ワーキングツリーはクリーン、`7215021` が最新。
 
 **ブランチは 2 系統のまま**:
-- `main`（チェックアウト中）: `5ad9927` が最新。`origin/main` より **6 コミット先行（未 push）**
-- `experiment/teacache-quality-eval`: TeaCache 評価ハーネス（`3d3b514`）と DLS-004。**未マージ**
+- `main`（チェックアウト中）: `origin/main` より **9 コミット先行（未 push）**
+- `experiment/teacache-quality-eval`（`eed9aa0`）: 未マージ。両ブランチが active.md を変更して
+  おりマージ時衝突（main 側 = DLS-012〜005, 003〜001 / experiment 側 = DLS-004, 003〜001）
 
-### 対外数値の現状（すべて検証済み）
+### 今セッションで確定した 3 つの大きな事実
 
-| モード | 公表値 | 実測 | 差 |
-|---|---|---|---|
-| T2I | 27.136 s | 27.214 s | +0.3% |
-| T2V | 32.165 s | 32.156 s | −0.0% |
-| I2V | 25.045 s | 24.905 s | −0.6% |
-| Policy（生成のみ） | 41.66 s | 42.88 s | +2.9% |
-| Policy（conditioning 込み） | **42.44 s**（今回更新） | 42.438 s | — |
+1. **guidance 不一致（DLS-010）**: T2I/T2V/I2V の公表倍率 1.23x/1.46x/1.47x は guidance 1.0
+   （CFG 無効）で測定。公式デフォルトは T2I 4.0 / T2V・I2V 6.0 で、`guidance != 1.0` は
+   1 ステップ 2 順伝播（`omni_mot_model.py` L2367-2369）。記事が公式デフォルトで実行していた
+   場合、約半分の計算量での比較になり倍率は成立しない。**Policy のみ公式デフォルト 1.0 で一致**。
+   guidance 1.0 の採用根拠を記した文書は repo に存在しない（無根拠に引き継がれていた）
+2. **golden MSE 全 run 不合格（DLS-011）**: 判定は `python scripts/check_policy_golden_mse.py`
+   （今回追加、全 run 一括採点）。記事は 0.013194 で PASS。誤差の構造は「計画全体の 1〜2
+   ステップ前倒し」（グリッパーは +2 シフトで MSE 0.507→0.0071、golden は step 8 / 本環境は
+   step 6 で閉じる）。**最適化前の 6/1 run から一貫して 0.126 なので速度最適化は無罪**
+3. **数値精度は原因ではない（DLS-012）**: E1（attention fp32 math）/ E2（+VAE fp32）/
+   E3（全系 fp32）すべて出力が run 間ノイズ帯（≤0.0086）内で不動。フラグは
+   `--policy-attn-fp32-math` / `--policy-vae-encode-fp32` / `--policy-model-fp32`（E3 は E1 併用必須）。
+   残る仮説は上流版差のみ: golden は 2026-05-01 内部コード生成、記事は「検証版」+ 消滅した
+   tokenizer pin `a18b727`（HF 404）、公開ウィンドウ 5/31→6/13 の diff は policy 経路に意味論
+   変更なし、**公開リポジトリの CI は action golden を検証していない**
 
-conditioning は 81.57 → **0.28 秒**（291 倍）。README §2 と
-`docs/cosmos3_rocm_policy_optimization_final_report.md` は更新済み。
+### 記事側条件の確定度（DLS-010 監査結果）
 
-### 再現手順の正（DLS-005 / DLS-007 / DLS-009）
-
-経路ごとに必要な条件が異なる。**片方の知識を他方に適用しないこと。**
-
-```bash
-# Policy 生成のみ 41.66 秒（cosmos_framework 経路）— TunableOp 表は不要
-python scripts/run_cosmos_framework_policy_rocm.py --warmup-runs 2 --policy-condition-cache
-
-# Policy conditioning 込み 42.44 秒
-python scripts/run_cosmos_framework_policy_rocm.py --warmup-runs 2 \
-  --policy-sync-profile --policy-min-condition-encode
-
-# T2I / T2V / I2V（diffusers 経路）— TunableOp 表が必須
-COSMOS3_ROCM_IMAGE=cosmos3-rocm72-diffusers:local \
-COSMOS3_DIFFUSERS_INSTALL=true \
-python3 scripts/run_rocm_speed_matrix.py --variant aotriton_tuned --case <case> --execute
-```
-
-- `aotriton_tuned` = `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` + `PYTORCH_TUNABLEOP_ENABLED=1` +
-  `TUNING=0` + `RECORD_UNTUNED=0` + `FILENAME=/workspace/result/rocm_speed_matrix/tunableop_results%d.csv`
-- T2I の記録 case は runner に存在しない。手打ちコマンドが
-  `docs/cosmos3-rocm-t2i-non-gemm-improvement-plan.md` L289-306 にある
-- **落とし穴**: `summary.json` の `tunableop_config.enabled` は CLI 引数のみ反映し環境変数を
-  反映しない（`configure_tunableop` L591-597）。記録側も `false` と出るので判断材料にならない
-
-### 測定プロトコルの正（DLS-009、今セッションで新規確定）
-
-- **本環境は同一条件でも run-to-run で bit 再現しない**。生成物の md5 / action 値の一致を
-  等価性の判定基準に使ってはいけない。実測フロア（同一フラグ v4 vs v6）は
-  action `mean_abs_diff 0.0268` / `max 0.4328`
-- 等価性を判定するなら**決定的な中間点**を使う。conditioning 系なら
-  `_prepare_inference_data` の戻り値 `initial_noise`（サンプリングへの入力テンソル）。
-  同一プロセス内なら通常エンコード 2 回でビット一致するため比較の土台が成立する
-- **bit 一致を判定条件に置く前に、対照 run で非決定性フロアを測る**
+- 記事は公式サンプル JSON をそのまま実行（golden_mse_max 0.05 への言及で確証）
+- T2I: 960×960/35steps/22s 明記。T2V: 256p/24f/12fps/**35steps（まとめ行に明記**、前半の
+  「記載なし」報告は WebFetch 要約の誤りで curl 原文取得により訂正）/22s。I2V: 17s のみで
+  条件は全部本プロジェクトの仮定。Policy: 640×480×17f/16×10/21s
+- 入力データ: T2I=公式 t2i.json、T2V=**自作プロンプト**（公式 t2v サンプルは別内容のため不可避）、
+  I2V=公式だが framework の i2v.json が指す robot_153.jpg とは**別ファイル**、Policy=完全公式
+- 記事原文の取得は curl 直接（`playwright-cli` 未インストール）。WebFetch 要約は 2 回
+  食い違ったため一次判断に使わないこと
 
 ## 完了済み（今セッション）
 
-- `--policy-min-condition-encode` の E2E 検証（`result/mincond_v5_20260727/`）:
-  `generate_batch` 124.906 → 42.438 秒、`get_data_and_condition` 81.575 → 0.276 秒、
-  profiler に `min_condition_encode_applied` 記録・`_skipped` 無し
-- 対照 run（`result/control_v6_20260727/`、フラグ無し・同一条件）による切り分け:
-  v4 と bit 一致せず、その差（mean_abs_diff 0.0268）はフラグ有無の差（0.0139）より大きい
-  → 出力差は実装由来ではなく GPU 非決定性
-- プローブ v3（`result/conditioning_probe_v3_20260727/probe_v3.json`）で等価性を直接実証:
-  `initial_noise` が通常 / 最小エンコードでビット完全一致（max_abs_diff 0.0）、
-  一方 `x0_tokens_vision` の latent frame 1〜4 は max_abs_diff 4.08〜4.97 で実際に大きく異なる
-  → 当該フレームがサンプリングに到達しないことの直接証拠。DLS-008 の assumption を実測確定に更新
-- 前セッション v2 プローブの欠落を発見: docstring は cond_mask 実測を掲げていたが、
-  コードは encode 内で `ProbeDone` を送出して到達していなかった（json 出力も無し）
-- DLS-009 を起票（判定基準の棄却 / 非決定性フロアの確定 / 等価性の実証）
-- 対外文書の更新（ユーザー選択「42.44 秒に更新し根拠を注記」、2026-07-27）:
-  README §2 と最終報告の §1 表・IMPORTANT・§3 結論
-- todo.md から DLS-007 / DLS-008 で解決済みの残留 2 件を削除
+- 4 モード条件監査（軸 A: 記事明記 vs 仮定、軸 B: データ出所）→ DLS-010 + 原本
+- 公式デフォルトの復元（`cosmos_framework/inference/defaults/*/sample_args.json`）と
+  guidance 不一致の発見（ユーザー洞察「公式スクリプトを見れば分かるのでは」が起点）
+- golden 照合（全 11 run FAIL）→ DLS-011 + 原本、検算（スケール一致・相関 0.808・
+  ベースライン比較）と時間シフト構造の発見
+- 原因の消去法: 最適化副作用 / fp16 / NATTEN / フレーム選択 / 初期ノイズ（arch_invariant_rand
+  = CPU NumPy でアーキ不変）/ チェックポイント版差（3 snapshot の重み blob 同一）/
+  公開コード drift / vision tower（policy 不使用）→ すべて棄却
+- fp32 感度実験 E1〜E3 実装・実行・判定 → DLS-012 + 原本（数値精度仮説の全棄却）
+- `scripts/check_policy_golden_mse.py` 追加（golden 自動 DL + 全 run 採点、stdlib のみ）
+- コミット `7215021`
 
 ## 次のアクション
 
@@ -91,30 +69,22 @@ python3 scripts/run_rocm_speed_matrix.py --variant aotriton_tuned --case <case> 
 
 ## ブロッカー・注意事項
 
-- **未 push**: main が `origin/main` より 6 コミット先行
-- **未マージ**: `experiment/teacache-quality-eval`。両ブランチとも `.claude/.dls/active.md` を
-  変更しているためマージ時に衝突する（main 側 = DLS-009/008/007/006/005/003/002/001、
-  experiment 側 = DLS-004/003/002/001）
-- **TeaCache 実験の速度数値は報告しない**（DLS-003 制約）。レポートは品質差のみ
-- **実測で分岐・条件が確定する前に結論を出さない**（前セッションで同型の誤り 3 回、
-  今セッションでも v2 プローブの未実測部分が発覚）。手書きコマンドは `case_command()` の
-  生成物と文字列比較し、静的読解の結論はテンソルのダンプで確認してから報告する。
-  原本: `.claude/.dls/raw/20260727_chat_repro_protocol_and_conditioning_scope.md`
-- **計測値が想定と桁違いなら計測系を疑う**: MIOpen カーネル探索がコールドスタートで
-  支配的になる。`MIOPEN_USER_DB_PATH=/workspace/result/rocm_speed_matrix/miopen_user_db` の
-  マウントが有効
+- **未 push**: main が origin/main より 9 コミット先行
+- **CUDA 参照 run はユーザー判断待ち**（環境調達が必要。todo.md Active 最上位）。
+  これが決まるまで README の「同一条件」表現の訂正は保留が安全（原因帰属が未確定のため）
+- **TeaCache 実験（DLS-004）は速度数値を報告しない**（DLS-003 制約）。9 run 中 2 run 完了、
+  `calib_logonly` は `thresh_0.00` と同一設定で冗長（本セッション前半の分析、DLS 未起票）
+- E1〜E3 のフラグは切り分け専用。**速度測定に使わない**（ヘルプにも明記済み）
+- 記事側 guidance の確定には T2V `--guidance 6.0` 1 run（transformer_forward 2 倍の実証）が残っている
 - Bash 出力が空になる事象が散発。回避策: スクラッチパッドのファイルにリダイレクトして Read
 
 ## 関連ファイル
 
-- `.claude/.dls/active.md`（DLS-001〜003, 005〜009。DLS-004 は experiment ブランチ側）
-- `.claude/.dls/raw/20260727_doc_mincond_e2e_verification_and_nondeterminism_floor.md`（今回の原本）
-- `.claude/.dls/raw/20260727_doc_conditioning_probe_v2_measured.md`（**cond_mask は未実測**。§5 参照）
-- `.claude/.dls/raw/20260727_doc_3modes_repro_verification.md`（3 モード再現検証）
-- `.claude/.dls/raw/20260727_doc_conditioning_probe_refutes_189frame_claim.md`（189 フレーム説の棄却）
-- `.claude/.dls/raw/20260726_doc_conditioning_full_frame_encode_verification.md`（**§2-4 は棄却済み**）
-- `scripts/run_cosmos_framework_policy_rocm.py`（`--policy-min-condition-encode`、`_min_frame_encode` /
-  `_plan_allows_min_encode` / `_profiled_get_data_and_condition`）
-- `result/mincond_v5_20260727/`（採用値 42.44 秒）、`result/control_v6_20260727/`（対照）、
-  `result/mainline_full_v4_20260726/`（削減前の基準）、
-  `result/conditioning_probe_v3_20260727/probe_v3.json`（等価性の実証データ）
+- `.claude/.dls/active.md`（DLS-001〜003, 005〜012。DLS-004 は experiment ブランチ側）
+- `.claude/.dls/raw/20260727_doc_article_conditions_and_official_defaults_audit.md`（軸 A/B + guidance）
+- `.claude/.dls/raw/20260727_doc_policy_golden_mse_verification.md`（照合方法と全 run 結果）
+- `.claude/.dls/raw/20260727_doc_policy_golden_mse_root_cause_analysis.md`（消去法と時間シフト）
+- `.claude/.dls/raw/20260727_doc_policy_golden_mse_precision_sweep.md`（E1〜E3）
+- `scripts/check_policy_golden_mse.py`（golden 採点の再現手順の正）
+- `scripts/run_cosmos_framework_policy_rocm.py`（E1〜E3 フラグ）
+- `result/attn_fp32_e1_20260727/` / `result/vae_fp32_e2_20260727/` / `result/model_fp32_e3_20260727/`
