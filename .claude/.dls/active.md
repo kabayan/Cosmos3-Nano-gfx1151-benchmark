@@ -8,7 +8,7 @@
   - business: DLS-008 の削減（`generate_batch` 124.906 → 42.438 秒）を対外文書に反映できるかは等価性の証明にかかっている。bit 一致を基準に置いたままでは永久に未達で、実装を疑い続けて手戻りが発生する。判定点を移したことで厳密性の主張が可能になり、conditioning 込みの正直な総時間を約 42 秒として示せる
   - constraint: 非決定性フロア（フラグ無し同士 v4 vs v6: action mean_abs_diff 0.026755 / max 0.4328）が本フラグ由来の差（v4 vs v5: 0.013901 / 0.1557）より大きい。E2E 出力での等価判定は原理的に不可能。判定は決定的な中間点でしか行えない
 - **where**: scripts/run_cosmos_framework_policy_rocm.py（`--policy-min-condition-encode`、`_min_frame_encode`）、temp_src/cosmos_framework/model/vfm/omni_mot_model.py（`_prepare_inference_data` L1577-1776 の戻り値 `initial_noise`、L1667-1678 の `cond_mask` 適用）、temp_src/cosmos_framework/inference/inference.py（`_fallback_seed` L157-170 / L1393）、README.md §2（Policy 行の入力観測エンコードと IMPORTANT）、docs/cosmos3_rocm_policy_optimization_final_report.md（§1 サマリー表・IMPORTANT・§3 結論）、result/mincond_v5_20260727/、result/control_v6_20260727/、result/conditioning_probe_v3_20260727/、tasks/todo.md（無効だった判定基準の記載元）
-- **sources**: .claude/.dls/raw/20260727_doc_mincond_e2e_verification_and_nondeterminism_floor.md
+- **sources**: .claude/.dls/raw/20260727_doc_mincond_e2e_verification_and_nondeterminism_floor.md, .claude/.dls/raw/20260727_chat_conditioning_disclosure_decision.md
 - **requested_by**: 自己判断（tasks/todo.md Active 最上位に定めた切り分け手順に従って実行）。対外文書への反映方針はユーザー選択（2026-07-27、「42.44 秒に更新し根拠を注記」）
 - **depends_on**: DLS-008
 - **affects**: DLS-008（assumption「latent frame 1〜4 は値が読まれない」を静的読解ベースから実測確定に更新する。E2E 未検証という留保も解消）, DLS-006（conditioning 込み参考値を 124.91 → 42.44 秒に更新。あわせて「記事の 21 秒は生成のみ」という推定の重要度が下がった。削減後は conditioning が 0.28 秒で、記事側が含む / 含まないのどちらでも比較結果が実質変わらないため、DLS-006 の assumption が外れても結論は揺るがない）, DLS-003（本フラグは近似ではなく厳密であり計算省略系に該当しないことを確定）
