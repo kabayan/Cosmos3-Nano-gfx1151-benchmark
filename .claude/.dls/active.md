@@ -1,5 +1,28 @@
 # DLS active エントリ
 
+## DLS-013
+- **date**: 2026-07-27
+- **what**: 「golden MSE 不合格（DLS-011）は tokenizer pin a18b727 の消滅により本環境が代替 revision の tokenizer を使っていることに起因する」仮説を実測で棄却し、あわせて (1) 公開前 squash 窓（5/13〜5/31）で HF checkpoint が v1_midtrain → v2_midtrain に差し替えられていたこと（tensor バイト照合で別 checkpoint と確定）、(2) golden はモデル生成物ではなくデータセット実測アクションで pin 固定・不変であること（golden_action_path == action_path）、(3) 参照記事の公開日は 2026-06-01（HF super-squash・pin→main 変更と同日）であることを特定する。決着実験 E4（v1 重みを ROCm で golden 照合）を定義し、CUDA 参照 run は E4 が FAIL/不能の場合の後続に位置づける
+- **why**:
+  - origin: implementation
+  - business: DLS-012 の assumption「上流版差」（confidence: medium）を具体的機構（checkpoint 差し替え）まで絞り込めた。E4 が PASS すれば「ROCm 移植は品質中立」を assumption から実証に格上げでき、CUDA 環境調達なしで決着する
+  - constraint: v1 重みは旧 tensor 名（814 key 全面リネーム、ただし key 数は v2 と同一の 1165）+ 旧 config 形式で公開コードに直接載らない。E4 の FAIL はロード誤りと真の不一致を識別できず、PASS のみが情報を持つ（リスク非対称）。a18b727 自体は squash で消滅済みのため内容の直接照合は永久に不可能
+- **where**: HF nvidia/Cosmos3-Nano branch spectralflight/shim（35c5cd345 = v1_midtrain iter12000 EMA、checkpoint.json に記録）、同 main（411f42a8）、cosmos-framework 1bd5fdc36（pin a18b727 初出、Cosmos3-Nano.yaml L185）/ 411d25b2e（pin→main 変更）、/tmp/cosmos-framework/inputs/omni/action_policy_robot.json（golden_action_path == action_path、cosmos-dependencies pin 2b17a2413bd8）
+- **sources**: .claude/.dls/raw/20260727_doc_tokenizer_pin_forensics_and_v1v2_checkpoint_swap.md
+- **requested_by**: ユーザー（「tokenizer pin の法医学的調査」2026-07-27。契機は議論中のユーザー指摘「記事によれば元のリポジトリとの精度を比較しているように見える」）
+- **depends_on**: DLS-012
+- **affects**: DLS-011（「golden は 2026-05 内部コードで生成」という前提を「golden はデータセット実測で不変、動いたのはモデル側」に訂正）, DLS-012（assumption「上流版差」の機構を checkpoint v1→v2 差し替えに具体化。本セッション議論で最有力候補に昇格していた tokenizer 代替説は棄却）
+- **rejected_hypothesis**:
+  - target: DLS-012（assumption の原因候補のうち、本セッション議論で最有力に昇格させた具体候補）
+  - hypothesis: tokenizer pin a18b727 の消滅により本環境が代替 revision の tokenizer（VLM processor）を使っており、その内容差が golden MSE 不合格（グリッパー flip [6,7] 固定の離散差）を生んでいる
+  - reason: processor が読む全ファイル（tokenizer.json / tokenizer_config / vocab / merges / chat_template / preprocessor_config / video_preprocessor_config）が pre-squash 5/13（shim branch）と現行 main で git oid 完全一致、ローカル 3 snapshot（6/1・6/6・7/9）でも blob 完全一致。tokenizer 内容は全観測期間で不変
+- **rejected_alternatives**:
+  - 何もしない（発見を DLS-012 の注記強化のみで閉じる）: E4 なしでも機構の絞り込みは記録できるが、「品質中立」主張が assumption 依存のまま残る。E4 実行はユーザー判断待ちとして保留（dormant ではなく次アクション候補）
+  - CUDA 参照 run を先に実行する: 環境調達コストがかかる一方、E4 はローカルで完結し PASS すれば CUDA run 自体が不要になるため、順序を E4 先行に変更
+- **commits**:
+  - baseline: bd6930d
+- **assumption**: 記事（2026-06-01 公開、検証実施はそれ以前）は v1 時代の重みで golden 照合した可能性があり、公開 v2 checkpoint が golden 基準を満たすかは誰も検証していない（confidence: medium。根拠は (1) CI は numeric golden 対象外、(2) RTX 5090 記事は policy 未検証、(3) v1→v2 で layer0 layernorm の 96% の要素が相違し軌道が変わりうる。反証手段は E4 = v1 重み ROCm run の PASS、または CUDA 参照 run）
+
 ## DLS-012
 - **date**: 2026-07-27
 - **what**: golden MSE 不合格（DLS-011）の原因として最有力だった「ROCm スタックの数値精度差（AOTriton attention / MIOpen conv / hipBLASLt GEMM）」仮説を、fp32 感度実験 3 本（E1: attention、E2: VAE、E3: モデル全体）で棄却する。出力は全精度構成で run 間ノイズ帯（MSE ≤0.0086）の内側に留まり（全系 fp32 でも対 bf16 0.000478、グリッパー flip [6,7] 不変）、原因を「golden 生成環境（2026-05 内部コード・消滅した tokenizer pin a18b727）と公開コード・資産の意味論差」に絞る。決着には CUDA 参照 run（同一公開コード + 同一入力を CUDA GPU で 1 本）が必要
