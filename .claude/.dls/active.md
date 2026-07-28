@@ -1,6 +1,25 @@
 # DLS active エントリ
 
-## DLS-017
+## DLS-018
+- **date**: 2026-07-28
+- **what**: und branch cache を単一署名スロットから署名キー LRU 2 スロットに変更し（DLS-017 採用案 A の執行）、CFG 下の全スラッシュ（140 writes / 0 reads）を read 主体（2 writes / 138 reads / 0 invalidations）に回復する。出力はビット一致（T2I jpg / I2V mp4 とも md5 不変）で厳密キャッシュ性を実証し、公式 guidance 条件の対記事倍率を T2I 5.25x→2.25x / I2V 11.33x→2.69x に更新する。あわせてイメージ同梱 /opt/diffusers への同期方式を docker cp + commit に確定する
+- **why**:
+  - origin: implementation
+  - business: I2V 11.33x / T2I 5.25x というスラッシュ由来の異常悪化が解消され、公式 guidance 条件の倍率が実装欠陥ではなく CFG の計算量 2 倍を反映した値（2.25〜2.69x）になった。README §2 の両条件併記はこの値で行える。DLS-017 assumption（T2I ≈2.4x / I2V ≈2.6x、confidence: medium）は実測で解消 — I2V は概算どおり、T2I は概算より良い（uncond 系列長が短い効果の方向）
+  - constraint: 3 モードとも価格差 2.0 は依然超過（T2I 2.25x / T2V 2.53x / I2V 2.69x）。DLS-017 の「CFG 条件での 2.0 到達は同一計算内容の制約下では非現実的」の確定と整合し、2.0 到達を目的とする追加チューニングは行わない。cache メモリは 2 スロット分に増える（I2V 実測 1.947 GiB）
+- **where**: third_party/diffusers/src/diffusers/models/transformers/transformer_cosmos3.py（`_und_branch_cache_slots` / forward の署名判定、クローン内コミット f829105c7）、/opt/diffusers（イメージ sha256:554e0573ec89... に同期済、旧 sha256:eab19ad6eb66... はロールバック用）、result/guidance_2slot_20260728/（run_commands.sh・summary・出力）、scripts/benchmark_classmethod_article_t2i_rocm.py / benchmark_classmethod_article_t2v_i2v_rocm.py（API 不変のため無変更）
+- **sources**: .claude/.dls/raw/20260728_doc_und_cache_two_slot_verification.md
+- **requested_by**: 自己判断（/dls-continue による todo.md Active 先頭実行可能タスクの執行。採用判断自体は DLS-017 でユーザー確定済み）
+- **depends_on**: DLS-016, DLS-017
+- **affects**: DLS-017（assumption「A で T2I ≈2.4x / I2V ≈2.6x まで回復」を実測で解消。C 案 = T2V への適用は「A の実測効果を見てから再評価」の条件が満たされたが、T2V の 2.53x は cache 無関係の計算量 2 倍が主因のため dormant のまま維持）, DLS-016（公式 guidance 条件の倍率を 5.25x/11.33x から 2.25x/2.69x に更新。T2V 2.53x は不変）, DLS-007（guidance 1.0 の公表値再現条件は不変。単一署名時の動作は 2 スロット化後も同一経路のため影響なし）
+- **rejected_alternatives**:
+  - イメージ rebuild（build_cosmos3_rocm72_diffusers_image.sh）で同期する: Dockerfile が `COPY . /opt/diffusers` → pip install の層順のため、コード変更で pip 層が再実行されネットワーク（DNS）依存が復活する（DLS-007 で記録された失敗モード）。変更 1 ファイルに対し過大。dormant（依存パッケージ自体を変える時は rebuild が正）
+  - 実行時 bind-mount で third_party を /opt/diffusers に被せる: イメージ実体と third_party が乖離したまま走るため「イメージ同梱版と同期させる」（DLS-017 前提）に反し、mount 忘れで旧コードが走る事故経路を作る。不採用
+  - 検証を cache stats のみで済ませ出力一致を確認しない: 厳密キャッシュ性（近似ではない）が本実装の対外的な主張の核であり、決定性が確認済みの経路で md5 比較のコストはほぼゼロ。不採用
+- **commits**:
+  - baseline: 95463e9
+- **assumption**: 対記事倍率の基準値（T2I 22.017 秒 / I2V 16.992 秒相当）は DLS-016 の実測から逆算した値で、記事側条件の不確かさ（実際の guidance 未確認、DLS-010 assumption）を継承する（confidence: medium。速度は各条件 measured 1 run だが DLS-007 で同プロトコル再現性 ±0.6% を確認済み）
+
 - **date**: 2026-07-28
 - **what**: CFG 条件チューニングの方針として「CFG の cond/uncond を 1 回の forward にバッチ化して重み読み出しを償却する」候補を PoC 実測で棄却し、採用案を und branch cache の 2 スロット化（cond/uncond 各 1、厳密キャッシュのまま read 化を回復）に確定する。あわせて「同一計算内容の制約（DLS-003）の下で CFG 条件の価格差 2.0 到達は現実的でない」ことを実測根拠つきで確定し、チューニングの目的を「2.0 到達」から「スラッシュ由来の異常な悪化（I2V 11.33x / T2I 5.25x）の解消」に置き換える
 - **why**:

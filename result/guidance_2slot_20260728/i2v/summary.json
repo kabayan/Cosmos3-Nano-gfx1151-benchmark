@@ -1,0 +1,149 @@
+{
+  "model": "nvidia/Cosmos3-Nano",
+  "dtype": "float16",
+  "load_seconds": 6.778,
+  "comparison_target": {
+    "source": "Classmethod DGX Spark article",
+    "t2v": "256p, 24 frames, 12 fps, model resident after about 22 sec",
+    "i2v": "official sample image/prompt, article reported about 17 sec"
+  },
+  "warmup": {
+    "enabled": true,
+    "seconds": 374.396,
+    "latent_shape": [
+      1,
+      48,
+      2,
+      16,
+      28
+    ],
+    "latent_dtype": "torch.float16",
+    "stage_profile": {
+      "vae_decode": {
+        "seconds": 374.396,
+        "calls": 1
+      }
+    }
+  },
+  "tunableop_config": {
+    "enabled": false,
+    "requested": {
+      "max_tuning_duration": null,
+      "max_tuning_iterations": null,
+      "rotating_buffer_size": null
+    },
+    "applied": {}
+  },
+  "runtime_options": {
+    "inference_mode": true,
+    "disable_progress_bar": true,
+    "stage_profile": true,
+    "allow_pipeline_error": false,
+    "abort_before_vae_decode": false,
+    "force_vae_encode_sdpa_math": false,
+    "cosmos3_transformer_attention_fallback": false,
+    "linear_profile": false,
+    "transformer_input_profile": false,
+    "und_branch_cache": true
+  },
+  "results": [
+    {
+      "case": "article_i2v_robot_arms",
+      "mode_warmup_runs": 1,
+      "measured_runs": 1,
+      "runs": [
+        {
+          "case": "article_i2v_robot_arms",
+          "seconds": 105.244,
+          "export_seconds": 0.171,
+          "stage_profile": {
+            "enabled": true,
+            "records": {
+              "transformer_forward": {
+                "seconds": 44.671,
+                "calls": 70
+              },
+              "vae_decode": {
+                "seconds": 4.144,
+                "calls": 1
+              },
+              "video_postprocess": {
+                "seconds": 0.022,
+                "calls": 1
+              }
+            },
+            "timed_stage_sum_seconds": 48.837,
+            "unattributed_pipe_seconds": 56.407
+          },
+          "output": "result/guidance_2slot_20260728/i2v/article_i2v_robot_arms_256p_24f_s35.mp4",
+          "prompt_source": "Cosmos3 official sample: example_i2v_input.jpg + example_i2v_prompt.json",
+          "settings": {
+            "height": 256,
+            "width": 448,
+            "frames": 24,
+            "fps": 12,
+            "steps": 35,
+            "guidance": 6.0,
+            "seed": 203
+          },
+          "run": 1,
+          "measurement_role": "warmup"
+        },
+        {
+          "case": "article_i2v_robot_arms",
+          "seconds": 45.622,
+          "export_seconds": 0.112,
+          "stage_profile": {
+            "enabled": true,
+            "records": {
+              "transformer_forward": {
+                "seconds": 40.238,
+                "calls": 70
+              },
+              "vae_decode": {
+                "seconds": 4.139,
+                "calls": 1
+              },
+              "video_postprocess": {
+                "seconds": 0.021,
+                "calls": 1
+              }
+            },
+            "timed_stage_sum_seconds": 44.398,
+            "unattributed_pipe_seconds": 1.224
+          },
+          "output": "result/guidance_2slot_20260728/i2v/article_i2v_robot_arms_256p_24f_s35.mp4",
+          "prompt_source": "Cosmos3 official sample: example_i2v_input.jpg + example_i2v_prompt.json",
+          "settings": {
+            "height": 256,
+            "width": 448,
+            "frames": 24,
+            "fps": 12,
+            "steps": 35,
+            "guidance": 6.0,
+            "seed": 203
+          },
+          "run": 2,
+          "measurement_role": "measured"
+        }
+      ],
+      "selected_seconds": 45.622
+    }
+  ],
+  "linear_profile": {
+    "enabled": false
+  },
+  "transformer_input_profile": {
+    "enabled": false
+  },
+  "und_branch_cache": {
+    "enabled": true,
+    "transformer_calls": 140,
+    "write_calls": 2,
+    "read_calls": 138,
+    "invalidations": 0,
+    "cached_slots": 2,
+    "cached_layers": 72,
+    "cache_gib": 1.947
+  }
+}
