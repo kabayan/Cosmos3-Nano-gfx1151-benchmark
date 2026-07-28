@@ -1,5 +1,27 @@
 # DLS active エントリ
 
+## DLS-020
+- **date**: 2026-07-28
+- **what**: gfx1151 の追加高速化は、生成条件・モデル重み・dtype・演算内容を維持し、現行出力に対する非劣化を実証できる限定検証だけを対象とする。現行 stable stack で 20%以上の改善を期待する根拠はない一方、追加高速化不能とも断定せず、未成熟な upstream 最適化は correctness と統合完了後に再評価する
+- **why**:
+  - origin: user_confirmed
+  - business: 過去の高速化履歴を公平に再判定し、精度を下げずに残る改善を回収したい。棄却済み案を再演する広範な探索と、新しい upstream 進展を無視した早すぎる打ち切りの両方を避ける必要がある
+  - constraint: T2V の厳密 cache と PyTorch 2.13 は未検証。AOTriton PR #205 は Cosmos3 の head_dim=128 を含む初の gfx1151 full tuning DB だが Draft で、性能 TBD・Level 1 correctness 進行中。DB 統合を担う PR #203 も未マージで runtime 互換性問題を検証中。MIOpen FAST mode は FindDb miss 時に immediate fallback を使い solver と定常性能を変えうる
+- **where**: scripts/benchmark_classmethod_article_t2v_i2v_rocm.py（T2V 厳密 cache 検証）、docker/・result/（PyTorch 2.13 隔離比較）、AOTriton PR #203/#205（head_dim=128 再評価条件）、scripts/run_cosmos_framework_policy_docker.sh・~/.cache/miopen（DLS-015 の cache 永続化を維持）、tasks/todo.md
+- **sources**: .claude/.dls/raw/20260728_chat_gfx1151_exact_tuning_reassessment.md
+- **requested_by**: ユーザー（「過去のチューニング履歴を公平に判断し、高速化ができないかを判定。精度を下げることは原則不可」および議論ドラフト承認、2026-07-28）
+- **depends_on**: DLS-001, DLS-002, DLS-003, DLS-015, DLS-017, DLS-018, DLS-019
+- **affects**: DLS-001（「物理限界」を絶対限界ではなく現行 stack の観測上限として限定し、新しい head_dim=128 tuning DB を再評価条件に追加）, DLS-015（MIOpen cache 永続化は維持するが FAST mode の無条件常用には拡張しない）, DLS-017（CFG 条件で20%級の改善余地なしという結論は維持し、再評価対象を upstream の gfx1151/head_dim=128 実測に限定）
+- **rejected_alternatives**:
+  - Draft AOTriton PR #203/#205 を現在の本線へ手動導入: upstream の correctness・runtime 検証が未完で、精度不変条件を満たす根拠がないため不採用。merge と correctness 完了後に再評価する dormant
+  - TeaCache・INT8/SageAttention・sparse attention・steps/frame/guidance 削減: 計算内容または生成条件を変え DLS-003 に反するため再提案しない
+  - vLLM/PagedAttention・channels_last_3d・deeper TunableOp・Stream-K・CFG バッチ化: 構造的不適合、実測悪化、実質ゼロ改善または約1.9%利得として棄却済みで、新しい反証がない
+  - `MIOPEN_FIND_MODE=2`（FAST）の無条件常用: FindDb miss 時に immediate fallback を使い、solver と定常性能が変わりうる。DLS-015 の cache 永続化だけを維持する
+  - 何もしない: 限定検証がすべて5%未満なら費用対効果上の採用候補。現時点では未検証の厳密 cache と stable stack 更新が残るため dormant
+- **commits**:
+  - baseline: f21a2b4
+- **assumption**: AOTriton PR #205 の「全 head dimension」には Cosmos3-Nano の head_dim=128 が含まれるが、merge 後に本 workload の長系列形状で性能向上するかは不明（confidence: medium。PR は性能 TBD、PR #203 の統合と correctness 完了後に同一入力・seed の probe で反証可能）。限定検証の停止線 5% は DLS-007 の再現性 ±0.6% を十分上回る実務的閾値（confidence: high）
+
 ## DLS-019
 - **date**: 2026-07-28
 - **what**: チューニング履歴再分析の議論（改善候補 A〜E、raw/20260728_chat_tuning_history_reanalysis.md）を決着させ、B（帳簿整合: DLS-004 エントリの main active.md への復元 + DLS-017 の欠落見出し補修）と A'（claim 残件の単独処理: 再評価レポート §1 への基準値訂正 CAUTION 注記）を採用する。C（過去棄却判断の stale check 再実施）は棄却し、D（lessons.md の決着）は留保のまま todo に残置する

@@ -11,6 +11,7 @@ DLS-123: タスク本体は本ファイルに一元化する。`tasks/next.md` �
 
 ## Active
 
+- [ ] gfx1151 精度不変チューニングの限定検証（DLS-020）: (1) T2V 公式 guidance 条件で既存の厳密 und branch cache を有効化し、速度と mp4 hash 一致を確認、(2) PyTorch 2.13 + AOTriton 0.12b を隔離環境で同一プロトコル比較、(3) AOTriton PR #203/#205 の merge・Level 1 correctness・性能値公開後に head_dim=128 probe を再評価。各検証が 5%未満なら追加 campaign を停止する
 - [ ] （留保継続・急がない）lessons.md の決着: 新設か、`tasks/todo.md` L4 の永続化先記載 / `rules/dls-code.md` L14 の条件付き参照の整理か（ユーザー設計判断待ち）。あわせて CK FMHA プローブ（再評価レポート §5-④「変化があった場合のみ深掘り」条件）の追跡方法（todo 維持 or DLS で dormant 明記）を決める
 - [ ] golden MSE の最終決着: **CUDA 参照 run**（E4 が仮説を棄却したため優先度が戻った）。公開コード b3967db + 同一入力（`inputs/omni/action_policy_robot.json`、seed 0）を CUDA GPU（AWS g6e.xlarge L40S 等）で 1 本実行し golden MSE を採点する。PASS(≈0.013) なら本環境固有の問題が残存 / FAIL(≈0.13) なら公開資産では記事値が再現しないことになり ROCm 移植は無罪。**当分実施不可の前提に変更（ユーザー決定 2026-07-28）— 実施可能になったら再浮上**。前提知見: (1) E1〜E3 fp32 感度実験で数値精度仮説は全棄却（DLS-012）、(2) E4 で checkpoint 版差仮説も棄却（DLS-014）、(3) 公開 v2 の policy 精度は NVIDIA 公式にも第三者にも測定記録が無い（公式 action ベンチは ID/FD のみで policy 指標なし、`golden_mse_max` を読むコードは framework に存在せず CI も numeric golden 対象外）
 - [ ] （次の Policy run で確認）カーネルキャッシュ持ち越し（DLS-015）有効下での golden MSE が既存帯 0.126〜0.134 に入ることの確認、および Policy 本体でのコールドスタート短縮幅の実測（プローブでは全体 −14% / 大 conv 初回 −21%、本体は未測定）
