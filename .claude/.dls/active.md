@@ -1,5 +1,26 @@
 # DLS active エントリ
 
+## DLS-019
+- **date**: 2026-07-28
+- **what**: チューニング履歴再分析の議論（改善候補 A〜E、raw/20260728_chat_tuning_history_reanalysis.md）を決着させ、B（帳簿整合: DLS-004 エントリの main active.md への復元 + DLS-017 の欠落見出し補修）と A'（claim 残件の単独処理: 再評価レポート §1 への基準値訂正 CAUTION 注記）を採用する。C（過去棄却判断の stale check 再実施）は棄却し、D（lessons.md の決着）は留保のまま todo に残置する
+- **why**:
+  - origin: user_request
+  - business: 参照切れ 2 件（DLS-004 が main の active.md に不在のまま DLS-005/DLS-018 の affects から参照、DLS-017 が見出し欠落で grep 不可視）は DLS の帳簿としての信頼性を毀損する。一次出典なき対外主張（「対論文比 1.44 倍達成済み」「論文値 8.0 秒」）の残存は DLS-006 型問題の再演リスク
+  - constraint: A の当初案（README §2 更新タスクへの吸収）は §2 更新が先にコミット（5c847ff）され失効したため単独処理に切替。claim 残件 3 点のうち README §4 TFLOPS 注記と optimization_analysis.md の「論文値」は処理済みと判明し、実処理は再評価レポート 1 件のみだった
+- **where**: .claude/.dls/active.md（DLS-004 復元・DLS-017 見出し補修）、docs/cosmos3_rocm_further_speedup_reassessment_20260726.md §1（CAUTION 注記）、tasks/todo.md（D 留保項目）
+- **sources**: .claude/.dls/raw/20260728_chat_tuning_history_reanalysis.md
+- **requested_by**: ユーザー（候補選択 B + A'、2026-07-28）
+- **depends_on**: DLS-006, DLS-016
+- **affects**: DLS-004（main active.md への復元で参照切れ解消。実験ブランチ experiment/teacache-quality-eval との帳簿不整合が解消）, DLS-006（是正内容を再評価レポートにも訂正注記として展開）
+- **rejected_alternatives**:
+  - C（過去棄却判断の stale check 再実施: 物理限界 1.127s/step、channels_last_3d 等）: 7/26 の再調査（DLS-001）がまさにこの stale check であり 2 日前に完了、情報増分ゼロ。不採用
+  - D（lessons.md の新設 or 参照整理）: rules/dls-code.md L14 の参照は「存在する場合は確認し」の条件付きで壊れていないため緊急性なし。ただし tasks/todo.md L4 の永続化先記載は空振り中。dormant（todo.md に留保項目として残置、ユーザー設計判断待ち）
+  - E（何もしない）: 参照切れ 2 件が残り続けるため不採用
+  - A 原案（claim 残件を README §2 更新タスクに吸収）: 吸収先が 5c847ff で先にコミット済みとなり失効
+- **commits**:
+  - baseline: 8be6c7b
+- **assumption**: 実験ブランチ experiment/teacache-quality-eval の active.md との将来の merge 衝突は、DLS-004 本文が両側で同一のため自明に解消できる（confidence: high。復元は同ブランチの git show から全文コピーで実施）
+
 ## DLS-018
 - **date**: 2026-07-28
 - **what**: und branch cache を単一署名スロットから署名キー LRU 2 スロットに変更し（DLS-017 採用案 A の執行）、CFG 下の全スラッシュ（140 writes / 0 reads）を read 主体（2 writes / 138 reads / 0 invalidations）に回復する。出力はビット一致（T2I jpg / I2V mp4 とも md5 不変）で厳密キャッシュ性を実証し、公式 guidance 条件の対記事倍率を T2I 5.25x→2.25x / I2V 11.33x→2.69x に更新する。あわせてイメージ同梱 /opt/diffusers への同期方式を docker cp + commit に確定する
@@ -20,6 +41,7 @@
   - baseline: 95463e9
 - **assumption**: 対記事倍率の基準値（T2I 22.017 秒 / I2V 16.992 秒相当）は DLS-016 の実測から逆算した値で、記事側条件の不確かさ（実際の guidance 未確認、DLS-010 assumption）を継承する（confidence: medium。速度は各条件 measured 1 run だが DLS-007 で同プロトコル再現性 ±0.6% を確認済み）
 
+## DLS-017
 - **date**: 2026-07-28
 - **what**: CFG 条件チューニングの方針として「CFG の cond/uncond を 1 回の forward にバッチ化して重み読み出しを償却する」候補を PoC 実測で棄却し、採用案を und branch cache の 2 スロット化（cond/uncond 各 1、厳密キャッシュのまま read 化を回復）に確定する。あわせて「同一計算内容の制約（DLS-003）の下で CFG 条件の価格差 2.0 到達は現実的でない」ことを実測根拠つきで確定し、チューニングの目的を「2.0 到達」から「スラッシュ由来の異常な悪化（I2V 11.33x / T2I 5.25x）の解消」に置き換える
 - **why**:
@@ -323,6 +345,27 @@
 - **commits**:
   - baseline: eed9aa0
 - **assumption**: 41.66 秒と 42.88 秒の差（+2.9%、サンプリング 1.128→1.175 s/it）は run-to-run 変動の範囲であり環境劣化ではない（confidence: medium。ノイズフロア未測定のため、必要なら同条件 2 回実行で確認する）
+
+## DLS-004
+- **date**: 2026-07-26
+- **what**: TeaCache 品質差定量評価（DLS-003）を、本線推論経路を変更しない既定無効のオプトイン + 実験専用ブランチとして実施し、評価プロトコルに恒等性検証（閾値 0 で無効時と一致）と run-to-run ノイズフロア測定（baseline 2 回実行）を含める
+- **why**:
+  - origin: implementation
+  - business: DLS-003 の制約（速度成果を本線に載せない・本線ベンチ環境を汚さない）を守りながら、TeaCache 適用時の出力品質差の実データを取得するため。ノイズフロアなしでは ROCm 実行の非決定性と TeaCache 起因の差分を区別できず、恒等性検証なしでは移植実装の正しさを示せない
+  - constraint: TeaCache 公式の rescale 多項式係数に Cosmos 系向けが存在しない。公式実装は diffusers パイプライン向けで、Policy 推論の cosmos_framework 経路には直接適用できない
+- **where**: scripts/run_cosmos_framework_policy_rocm.py（--teacache フラグ群と forward 差し替え）、scripts/run_teacache_quality_matrix.py、scripts/compare_teacache_quality.py、result/teacache_quality/
+- **sources**: .claude/.dls/raw/20260726_doc_teacache_eval_plan.md
+- **requested_by**: ユーザー（実施計画承認 2026-07-26）
+- **depends_on**: DLS-003
+- **affects**: なし
+- **rejected_alternatives**:
+  - temp_src/（cosmos-framework checkout、editable install 元）内に TeaCache を実装: 本線ベンチ環境の非汚染制約（DLS-003 assumption）に反するため dormant
+  - 公式 rescale 多項式の流用: Cosmos 系向け係数が公開されておらず作れない。恒等 rescale（生 rel L1 累積）で開始し、per-step ログを将来の多項式フィットの材料として残す
+  - third_party/diffusers の first_block_cache 流用: Policy 推論は diffusers パイプライン非経由のため適用不可
+- **commits**:
+  - baseline: 83f1111
+  - impl: 3d3b514
+- **assumption**: 生 rel L1（rescale なし）のスケールは公式既定閾値（0.03〜0.15）と一致しない可能性がある（confidence: medium。--teacache-log-only キャリブレーション実行で分布を測定し閾値ラダーを補正する）
 
 ## DLS-003
 - **date**: 2026-07-26
