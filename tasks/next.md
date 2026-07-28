@@ -1,7 +1,7 @@
 # 次のセッションへの引き継ぎ
 
 > 作成日時: 2026-07-28
-> 前セッションの要約: `/dls-discuss` で gfx1151 の過去チューニングを精度不変条件のもと再評価し、最新 upstream 情報を調査して DLS-020 に決着した（`240a9fb`）。
+> 前セッションの要約: DLS-020 の限定検証を進め、公式 guidance T2V の厳密 und branch cache を採用（DLS-021）、PyTorch 2.13 + AOTriton 0.12b を出力非等価で不採用（DLS-022）とした。結果を README に反映し `1f2ee59` でコミットした。
 
 DLS-123: 本ファイルは **文脈・状態の運搬** に専念する。タスク本体は `tasks/todo.md` の
 `Active` セクションに一元化する。
@@ -10,45 +10,48 @@ DLS-123: 本ファイルは **文脈・状態の運搬** に専念する。タ�
 
 ## 現在の状態
 
-**実行中のバックグラウンド run は無い。** 議論モードは `/dls-commit` で解除済み。
+**実行中のバックグラウンド run は無い。**
 
-- HEAD: `240a9fb`（DLS-020、gfx1151 精度不変チューニング再評価）
+- HEAD: `1f2ee59`（DLS-021 / DLS-022、README・検証記録・隔離 Dockerfile）
 - main は origin/main より先行した未 push コミットを保持
-- `experiment/teacache-quality-eval` は未マージ（DLS-004の品質評価トラック）
-- `.agents/`、`.codex/`、`AGENTS.md`、`agents/` は今回の議論前から存在する未追跡ファイル。
-  チューニング議論とは別件のため `240a9fb` には含めず、そのまま保持した
+- DLS-020 の即時実行可能な限定検証は完了。残件は AOTriton PR #203/#205 の
+  merge・Level 1 correctness・性能値公開を待ってから行う gfx1151/head_dim=128 probe のみ
+- 現行採用 stack は PyTorch 2.9.1 + 検証済み TunableOp 表
+- `experiment/teacache-quality-eval` は未マージ（DLS-004 の品質評価トラック）
+- `.agents/`、`.codex/`、`AGENTS.md`、`agents/` は本作業前から存在する未追跡物。
+  今回のコミットには含めず、そのまま保持した
 
-### DLS-020 の決着
+### 公式 guidance の厳密 und branch cache
 
-- 精度不変の意味を、生成条件・モデル重み・dtype・演算内容を維持し、現行出力に対する
-  非劣化を実証することとした
-- 現行 stable stack で20%以上の追加改善を期待する根拠はないが、追加高速化不能とも断定しない
-- 過去に棄却済みの TeaCache本線導入、INT8/SageAttention、vLLM/PagedAttention、
-  channels_last_3d、deeper TunableOp、Stream-K、CFGバッチ化は再試行しない
-- 未検証対象は、T2V厳密und branch cache、PyTorch 2.13隔離比較、upstream完了後の
-  gfx1151/head_dim=128 AOTriton probeに限定
-- 限定検証が5%未満なら追加campaignを停止する
+- T2I: 115.589 → 49.633 秒（-57.1%、2.33x speedup）、JPG byte 一致
+- T2V: 55.561 → 40.806 秒（-26.6%、1.36x speedup）、MP4 byte 一致
+- I2V: 192.521 → 45.622 秒（-76.3%、4.22x speedup）、MP4 byte 一致
+- 各モードとも warmup + measured の計 140 transformer calls は
+  2 writes / 138 reads / 0 invalidations。近似・計算省略ではない
+- README の公式 guidance 値と cache 効果表を上記結果へ更新済み
 
-### 最新 upstream 調査
+### PyTorch 2.13 隔離比較
 
-- AOTriton PR #205（2026-07-27 Draft）はgfx1151の全head dimensionを対象とし、
-  Cosmos3-Nanoのhead_dim=128を含む。Level 1 correctness進行中、性能TBD
-- 部分DB統合のPR #203も未マージで、runtime互換性問題を検証中
-- PR #200の平均約61%・最大97%改善はhead_dim=64限定で、Cosmos3へ直接適用不可
-- AOTriton 0.13bはcompiler/tuning DB変更なし。単独upgradeは性能施策にならない
-- PyTorch 2.13はAOTriton 0.12bでgfx1151を正式経路化したが、PR #205は未収録
-- Kokoro-FastAPI #454の `MIOPEN_FIND_MODE=2` はFAST mode。FindDb miss時に
-  immediate fallbackを使い定常性能が下がりうるため、本線には採用しない
-- DLS-015のMIOpen/Inductor/Triton cache永続化は維持する
+- `docker/cosmos3-rocm72-diffusers-torch213.Dockerfile` で再現可能な派生 image を作成
+- image: `cosmos3-rocm72-diffusers:torch213`
+  (`sha256:48ff721a2c79bfd6904705f1d0ee0e4b09441dbd0b05a9cf54ae3bc68b73a2d7`)
+- torch 2.13.0 + torchvision 0.28.0 + Triton ROCm 3.7.1 + AOTriton 0.12.0 の GPU smoke は合格
+- ROCm 7.2 index に torchaudio 2.13 wheel が無く、旧 2.9 binary は ABI 不整合のため派生 image から削除
+- 旧 TunableOp 表は ROCBLAS_VERSION validator 不一致で安全に流用不可
+- T2V は 53.361 秒（未調律）で、現行 40.806 秒より遅い。ただし性能の最終結論には使わない
+- MP4 hash が変わり全 21 decoded frame が相違（PSNR 28.41 dB / SSIM 0.9488）したため、
+  事前登録済みの hash 一致条件により不採用。2.13 用再調律には拡張しない
 
 ## 完了済み（今セッション）
 
-- 過去DLS・raw・性能レポート・実測resultを再読し、採用済み／棄却済み／未検証を分離
-- gfx1151関連のROCm、TheRock、PyTorch、AOTriton、hipBLASLt、MIOpen情報を一次情報中心に調査
-- AOTriton PR #203/#205という新しいhead_dim=128再評価条件を特定
-- Kokoro-FastAPI #454をローカルDLS-015と照合し、cold-start対策は既に導入済みと判定
-- 議論構造を `raw/20260728_chat_gfx1151_exact_tuning_reassessment.md` に保存
-- DLS-020と限定検証タスクを追加し、`240a9fb` でコミット
+- T2V 公式 guidance 条件で既存の厳密 und branch cache を実測し、26.6%短縮と byte 完全一致を確認
+- DLS-021 と検証原本
+  `.claude/.dls/raw/20260728_doc_t2v_und_branch_cache_official_guidance_verification.md` を追加
+- PyTorch 2.13 + AOTriton 0.12b の隔離 image を構築・smoke・同一プロトコル比較
+- 出力非等価を確認し、現行 PyTorch 2.9.1 stack 維持を DLS-022 に記録
+- `README.md` に3モードの cache 効果と最新公式 guidance 値を反映
+- 再評価レポートと `tasks/todo.md` を DLS-022 の結論に同期
+- 上記7ファイルを `1f2ee59` でコミット
 
 ## 次のアクション
 
@@ -56,20 +59,23 @@ DLS-123: 本ファイルは **文脈・状態の運搬** に専念する。タ�
 
 ## ブロッカー・注意事項
 
-- AOTriton PR #203/#205は未マージ・検証中。Draft版を本線へ手動導入しない
-- diffusers経路の非劣化は同一入力・seedの出力hash、Policy経路は既存run-to-runノイズ帯と
-  golden MSE帯で判定する
-- `MIOPEN_FIND_MODE=2` は単なるcache読込指定ではなくsolver選択方針を変えるFAST mode
-- PyTorch 2.13は既存環境を上書きせず、隔離コンテナで比較する
-- `playwright-cli` は環境に未導入。今回のURL本文取得は内蔵Webへフォールバックした
-- CUDA参照runは当分実施不可（既存のユーザー決定）
-- third_party/diffusersと実行イメージ `/opt/diffusers` を乖離させない
+- AOTriton PR #203/#205 は未マージ・検証中。Draft版を本線へ手動導入しない
+- diffusers 経路の非劣化条件は同一入力・seed の出力 hash 一致
+- PyTorch 2.13 の未調律速度を 2.13 本体の性能結論として引用しない
+- 2.9.1 の TunableOp 表を 2.13 へ validator 書き換えで流用しない
+- benchmark 成果物は gitignore 対象の `result/` にあるため、再生成に必要な条件・hash・数値は raw に転記済み
+- todo hygiene 候補: `tasks/todo.md` の完了済み torch 2.13 項目。ユーザー承認なしに削除しない
+- CUDA参照 run は当分実施不可（既存のユーザー決定）
+- third_party/diffusers と実行 image `/opt/diffusers` を乖離させない
 
 ## 関連ファイル
 
-- `.claude/.dls/active.md`（DLS-020）
-- `.claude/.dls/raw/20260728_chat_gfx1151_exact_tuning_reassessment.md`（議論原本）
-- `tasks/todo.md`（限定検証タスク）
-- `scripts/benchmark_classmethod_article_t2v_i2v_rocm.py`（T2V厳密cache候補）
-- `scripts/run_cosmos_framework_policy_docker.sh`（DLS-015 cache永続化）
-- `docs/cosmos3_rocm_further_speedup_reassessment_20260726.md`（従来の再評価）
+- `.claude/.dls/active.md`（DLS-020〜DLS-022）
+- `.claude/.dls/raw/20260728_doc_t2v_und_branch_cache_official_guidance_verification.md`
+- `.claude/.dls/raw/20260728_doc_pytorch_213_rocm72_isolated_t2v_verification.md`
+- `README.md`（公式 guidance と厳密 cache 効果表）
+- `docker/cosmos3-rocm72-diffusers-torch213.Dockerfile`
+- `docs/cosmos3_rocm_further_speedup_reassessment_20260726.md`
+- `tasks/todo.md`
+- `result/t2v_und_cache_official_20260728/`
+- `result/t2v_und_cache_torch213_official_20260728/`
