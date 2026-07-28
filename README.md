@@ -91,6 +91,18 @@ T2I / T2V / I2V は guidance（CFG）設定で transformer の計算量が約 2 
 > `--policy-sync-profile --policy-min-condition-encode` で再現できます
 > （削減フラグ無しの 124.91 秒は `--policy-sync-profile` のみで再現できます）。
 
+### 🖼 生成サンプル（上記ベンチマーク run の実出力）
+
+| T2I（960x960, 公式 guidance 4.0） | Policy（640x480 x 17f、先頭/中間/末尾フレーム） |
+|---|---|
+| ![T2I sample](docs/assets/sample_t2i_official_guidance.jpg) | ![Policy frames](docs/assets/sample_policy_frames.jpg) |
+
+| T2V（256p, 24f、先頭/中間/末尾フレーム） | I2V（256p, 24f、先頭/中間/末尾フレーム） |
+|---|---|
+| ![T2V frames](docs/assets/sample_t2v_frames.jpg) | ![I2V frames](docs/assets/sample_i2v_frames.jpg) |
+
+出典 run: T2I / I2V は `result/guidance_2slot_20260728/`、T2V は `result/t2v_und_cache_official_20260728/`、Policy は `result/mainline_full_v4_20260726/`（いずれも上表の公表値を出した測定 run そのもの）。動画 3 モードは各 mp4 から先頭・中間・末尾フレームを抽出した静止画です。T2I / T2V / I2V は厳密 und branch cache 有効時の出力で、cache 無効時と bit/byte 完全一致を確認済みです。
+
 ---
 
 ## 3. 適用された主要な最適化技術

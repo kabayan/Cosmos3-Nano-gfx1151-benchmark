@@ -9,6 +9,8 @@ tmp/
 .rocprofv3/
 *.jpg
 *.mp4
+# README / 発表資料に埋め込む生成サンプルは追跡する
+!docs/assets/*.jpg
 tunableop_results*.csv
 tunableop_untuned*.csv
 # CocoIndex Code (ccc)
