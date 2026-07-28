@@ -1,5 +1,48 @@
 # DLS active エントリ
 
+## DLS-015
+- **date**: 2026-07-28
+- **what**: cosmos-framework 経路の実行コンテナ定義（イメージ + 起動ラッパー）を repo の成果物として確定し、あわせてカーネル探索・コンパイル結果を毎 run 捨てていた状態を解消してホストへ持ち越すようにする。持ち越しは実行方法のキャッシュであり計算内容を変えないため、DLS-003 の計算省略系には該当しないものとして扱う
+- **why**:
+  - origin: user_request
+  - business: 実行コンテナの作り方が repo のどこにも無く、セッションごとに再発見が必要だった（今回も依存の特定に反復を要した）。これは DLS-005 で約 2 時間の誤報調査を招いた「再現手順が未記録」と同型の欠落であり、記録しないかぎり再発する。キャッシュ持ち越しは実験 1 本あたりのコールドスタートを削り、決着実験の反復コストを下げる
+  - constraint: 依存は pyproject の `[project].dependencies` だけでは不足し、実測で `iopath` / `multi-storage-client==0.44.0` / `boto3` / `wandb` / `qwen_vl_utils` の追加が必要だった。diffusers は git main だと `huggingface-hub>=1.23` を要求し transformers 4.57 系（`huggingface-hub<1.0`）と解決不能になるためリリース版を使う。find-db の有無で MIOpen のアルゴリズム選択が変わりうるため bit 一致は保証しない
+- **where**: docker/cosmos3-rocm72-framework.Dockerfile（新規）、scripts/run_cosmos_framework_policy_docker.sh（新規、`CACHE_DIRS=0` で持ち越し無効化）、scripts/probe_kernel_cache_persistence.py（新規、効果測定）、~/.cache/miopen（gfx1151_20.ukdb）、~/.cache/cosmos3-rocm/{inductor,triton}、result/kcache/
+- **sources**: .claude/.dls/raw/20260728_doc_e4_v1_checkpoint_golden_verification.md
+- **requested_by**: ユーザー（「MIOpen?が毎回ロードされるなどの精度に影響しないチューニングを実施」2026-07-28）
+- **depends_on**: DLS-005
+- **affects**: DLS-005（headline 数値の再現手順に「どのコンテナで実行するか」が欠けていた点を補完する）, DLS-003（キャッシュ持ち越しは計算内容を変えないため計算省略系の対象外と確定）
+- **rejected_alternatives**:
+  - `COSMOS_TRAINING=1` を立てて `--config-file` / `--model-size` を CLI から使う: これらは `Training[...]` 注釈で推論時は `Suppress` される。環境変数で開けると `use_ema_weights` など他の Training 既定も同時に露出し、ベースライン run との条件差が広がる。checkpoint 解決点 1 箇所の差し替えで足りるため不採用
+  - MIOpen の find mode を明示指定して探索を強制/抑制する（`MIOPEN_FIND_MODE` / `MIOPEN_FIND_ENFORCE`）: アルゴリズム選択の方針自体を変えることになり「実行方法のキャッシュ」の範囲を超える。既存 run との比較可能性が落ちるため dormant（コールドスタートがさらに問題化したら再評価）
+  - 何もしない（毎 run 探索を許容する）: 決着実験の反復が続く局面で 1 run あたりのコールドスタートが積み上がる。実装コストが小さく可逆（`CACHE_DIRS=0`）なため不採用
+- **commits**:
+  - baseline: 938b475
+- **assumption**: 持ち越しによる MIOpen アルゴリズム選択の変化は golden MSE を既存帯（0.126〜0.134）の外へ動かさない（confidence: medium-high。根拠は DLS-012 の fp32 感度実験で全系 fp32 でも軌道が動かなかったこと。反証手段は持ち越し有効下での次の Policy run の採点で、帯を外れたら `CACHE_DIRS=0` に戻す）。効果の実測は conv3d プローブでの全体 −14% / 大 conv 初回 −21% のみで、Policy 本体での短縮幅は未測定
+
+## DLS-014
+- **date**: 2026-07-28
+- **what**: 決着実験 E4（v1_midtrain 重みを本環境 ROCm で golden 照合）を実行し、「golden MSE 不合格（DLS-011）の原因は公開前 squash 窓での checkpoint v1→v2 差し替えである」という仮説を棄却する。v1 は 0.248372 で v2（0.126〜0.134）の約 2 倍悪く、golden に近いのは v2 の方だった。あわせて DLS-013 の「v1 と v2 は別 checkpoint」という判定を「同一系統の継続学習で、差は生成（moe_gen / diffusion expert）経路に集中」に訂正する
+- **why**:
+  - origin: implementation
+  - business: DLS-013 が最有力とした機構が消えたことで、golden 不合格の原因候補から上流の checkpoint 差し替えが外れる。残る決着手段は CUDA 参照 run に戻り、README の「同一条件」表現の訂正判断もその結果待ちで維持される
+  - constraint: 事前登録どおり FAIL はロード誤りと真の不一致を識別しない。ただし本 run では (1) 1165 key 全数の写像・shape・dtype 一致を事前スモークで確認、(2) ローダは missing_keys があれば例外を投げるがログに警告なし、(3) 出力が v2 比 MSE 0.149132 動いた（v2 同士の run 間ノイズ 0.001301 の 100 倍超）ことから、「重みが読まれなかった」線までは潰せている。v1 の config.json には現行 yaml との意味論差（qk_norm_for_text 等）が残り、これは交絡として残存する
+- **where**: result/v1_ckpt_e4_20260728/（golden MSE 0.248372）、/home/kabayan/workspace/cosmos3_v1_ckpt/（shim 35c5cd345 の重み、index.json の vision_encoder 絶対パスを相対へ修正済）、scripts/run_cosmos_framework_policy_rocm.py（`--policy-checkpoint-dir`）、/tmp/cosmos-framework/cosmos_framework/inference/model.py（`_DIFFUSERS_KEY_MAPPING_RES`）、同 model/vfm/mot/unified_mot.py（L470 qk_norm_for_text による q_norm/k_norm の Identity 化）
+- **sources**: .claude/.dls/raw/20260728_doc_e4_v1_checkpoint_golden_verification.md
+- **requested_by**: ユーザー（E4 実行承認 2026-07-27、「ダウンロードが終わったら照合 run を実行して」2026-07-28）
+- **depends_on**: DLS-013
+- **affects**: DLS-013（assumption「記事は v1 時代の重みで golden 照合した可能性があり、公開 v2 が golden を満たすかは誰も検証していない」の前半を棄却。後半（v2 の policy 精度は公式にも第三者にも測定記録が無い）は本セッションの調査で逆に補強された）, DLS-012（assumption「差は上流の版差」の具体機構から checkpoint 差し替えが外れ、CUDA 参照 run の優先度が戻る）, DLS-011（原因候補リストから checkpoint 版差を除外）
+- **rejected_hypothesis**:
+  - target: DLS-013
+  - hypothesis: golden MSE 不合格は公開前 squash 窓（5/13〜5/31）の checkpoint v1_midtrain → v2_midtrain 差し替えに起因し、v1 重みを使えば記事値 0.013 付近で合格する
+  - reason: v1 重みでの実測が 0.248372 で、v2（0.126471 / 0.128000）より約 2 倍悪い。記事が v1 で 0.013194 を出していたなら同じ v1 重みの本 run も 0.013 付近に来るはずで、19 倍乖離する。加えて全 1165 tensor 比較で v1↔v2 の相対平均絶対差は中央値 0.0128・最大 0.399 にとどまり、43 tensor は bitwise 一致。「別 checkpoint」ではなく同一系統の継続学習であり、差し替えという枠組み自体が過大だった
+- **rejected_alternatives**:
+  - v1 の config.json 意味論（qk_norm_for_text=False / tie_word_embeddings=True / layer_module=Qwen2MoTDecoderLayer）を再現して E4 を再実行する: v1 の `self_attn.q_norm.weight` が all-ones ではなく学習済みで、かつ v2 の対応 tensor とほぼ同値（mean 1.743011 vs 1.742882）であることから、und 側 QK norm は v1 でも実在したと考えられ、config.json の記載はエクスポート時メタデータの可能性が高い。交絡としては小さいと判断し実行しない。dormant（CUDA 参照 run でも決着しなければ再評価）
+  - E4 の FAIL をもって「本環境固有の問題」と結論する: FAIL の非識別性は事前登録済みで、PASS のみが情報を持つ設計。結論を出さない
+- **commits**:
+  - baseline: 938b475
+- **assumption**: v1↔v2 の差が生成経路（`*_moe_gen.*` / `action2llm` / `time_embedder` / `action_modality_embed` / `vae2llm`、相対差 0.24〜0.40）に集中し理解経路がほぼ不変であることは、両者が同一の und バックボーンを共有したまま生成側を追加学習した関係にあることを示す（confidence: medium-high。根拠は 1165 tensor 全数比較。反証手段は NVIDIA 側の学習履歴の開示だが入手不能）
+
 ## DLS-013
 - **date**: 2026-07-27
 - **what**: 「golden MSE 不合格（DLS-011）は tokenizer pin a18b727 の消滅により本環境が代替 revision の tokenizer を使っていることに起因する」仮説を実測で棄却し、あわせて (1) 公開前 squash 窓（5/13〜5/31）で HF checkpoint が v1_midtrain → v2_midtrain に差し替えられていたこと（tensor バイト照合で別 checkpoint と確定）、(2) golden はモデル生成物ではなくデータセット実測アクションで pin 固定・不変であること（golden_action_path == action_path）、(3) 参照記事の公開日は 2026-06-01（HF super-squash・pin→main 変更と同日）であることを特定する。決着実験 E4（v1 重みを ROCm で golden 照合）を定義し、CUDA 参照 run は E4 が FAIL/不能の場合の後続に位置づける

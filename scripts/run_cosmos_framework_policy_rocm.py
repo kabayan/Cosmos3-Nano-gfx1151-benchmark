@@ -1202,6 +1202,14 @@ def main() -> None:
         help="切り分け実験 E3 (DLS-011): モデル本体を float32 で構築する（GEMM 含む全演算の"
         "精度切り分け）。--policy-attn-fp32-math と併用必須。速度測定には使用しないこと",
     )
+    parser.add_argument(
+        "--policy-checkpoint-dir",
+        default=None,
+        help="切り分け実験 E4 (DLS-013): 重みの取得先をローカル HF ディレクトリに差し替える"
+        "（v1_midtrain 重みでの golden 照合）。レジストリ項目 Cosmos3-Nano の他の属性"
+        "（構成 yaml / model_memory_bytes / processor 取得元）はそのまま使うため、"
+        "ベースライン run との差分は重みファイルのみになる。速度測定には使用しないこと",
+    )
     args = parser.parse_args()
     if args.policy_model_fp32 and not args.policy_attn_fp32_math:
         parser.error("--policy-model-fp32 は --policy-attn-fp32-math と併用してください（flash 系は fp32 非対応）")
@@ -1226,6 +1234,19 @@ def main() -> None:
         print("[E3] model = fp32 (DLS-011 切り分け実験)", flush=True)
         _install_model_fp32()
     inference_args._get_device_memory_bytes = lambda: 120 * 1024**3
+
+    if args.policy_checkpoint_dir:
+        # 重みの取得先だけを差し替える。--checkpoint-path は Cosmos3-Nano のままなので
+        # 構成 yaml・model_memory_bytes・processor 取得元はベースライン run と同一になる。
+        # なお --config-file / --model-size は Training[...] 注釈のため COSMOS_TRAINING=0
+        # では CLI から抑制されており、経路として使えない。
+        from cosmos_framework.inference.common import args as common_args
+
+        checkpoint_dir = Path(args.policy_checkpoint_dir)
+        if not checkpoint_dir.is_dir():
+            raise SystemExit(f"--policy-checkpoint-dir が存在しない: {checkpoint_dir}")
+        print(f"[E4] checkpoint = {checkpoint_dir}（DLS-013 切り分け実験）", flush=True)
+        common_args.CheckpointArgs.download_checkpoint = lambda self: checkpoint_dir
 
     from cosmos_framework.inference.inference import OmniInference
 
