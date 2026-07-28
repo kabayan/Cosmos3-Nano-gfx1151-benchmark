@@ -1,10 +1,10 @@
 # 次のセッションへの引き継ぎ
 
-> 作成日時: 2026-07-27 14:30
-> 前セッションの要約: `/dls-discuss 精度深堀り` から tokenizer pin の法医学調査を実施（DLS-013）。
-> tokenizer 代替仮説を棄却し、真犯人候補として **HF checkpoint の v1→v2 差し替え**（公開前
-> squash 窓 5/13〜5/31）を発見。golden はデータセット実測（不変）と判明し、CUDA 不要の決着実験
-> E4（v1 重み ROCm 照合）を定義した。
+> 作成日時: 2026-07-28 02:45
+> 前セッションの要約: 決着実験 E4（v1_midtrain 重みでの ROCm golden 照合）を実行し、
+> 「v1→v2 の checkpoint 差し替えが golden 不合格の原因」仮説を棄却した（DLS-014）。
+> あわせて framework 実行コンテナの定義を repo 化し、毎 run 捨てていたカーネル
+> キャッシュを永続化した（DLS-015）。
 
 DLS-123: 本ファイルは **文脈・状態の運搬** に専念する。タスク本体は `tasks/todo.md` の
 `Active` セクションに一元化する。
@@ -13,42 +13,61 @@ DLS-123: 本ファイルは **文脈・状態の運搬** に専念する。タ�
 
 ## 現在の状態
 
-**実行中のバックグラウンド run は無い。** GPU 実行なしの調査セッション（HF/GitHub API +
-ローカル HF キャッシュ照合のみ）。
+**実行中のバックグラウンド run は無い。** コンテナ・バックグラウンドジョブとも停止確認済み。
 
 **ブランチは 2 系統のまま**:
-- `main`（チェックアウト中）: origin/main より先行（未 push）
+- `main`（チェックアウト中）: `713386e`、origin/main より 12 コミット先行（未 push）
 - `experiment/teacache-quality-eval`（`eed9aa0`）: 未マージ、active.md 衝突あり（前回から変化なし）
 
-### 今セッションで確定した事実（DLS-013、詳細は原本参照）
+### E4 の結論（DLS-014）— 仮説棄却
 
-1. **tokenizer pin 無罪**: pin の正体は `Cosmos3-Nano.yaml` L185 の VLM processor revision
-   `a18b727665f0dd03bc032229a6acb47ba11dc4cb`。404 の理由は HF main の 2026-06-01 Super-squash。
-   processor が読む全ファイルは pre-squash 5/13（branch `spectralflight/shim`）〜現行 main で
-   oid/blob 完全一致 → **代替 revision 使用は原因ではない**
-2. **v1→v2 checkpoint 差し替え発見**: shim の checkpoint.json は `cosmos3_ga_16bm8b_v1_midtrain`
-   iter12000 EMA、公開 framework は初日から `v2_midtrain` 前提。tensor 名全面リネーム
-   （814 key 中共通 2）+ バイト照合で layer0 layernorm が corr 0.90・96% 相違 = **別 checkpoint**。
-   本環境の全 run は v2（ローカル 3 snapshot すべて新 key 形式）
-3. **golden の正体訂正**: `golden_action_path` == `action_path`（cosmos-dependencies pin
-   `2b17a2413bd8` の bridge_20260501_0.json、16×10 実測アクション）。golden 側ドリフトは構造的に
-   不可能、**動いたのはモデル側だけ**。「golden は 2026-05 内部コード生成」は誤った枠組みだった
-4. **記事公開日 = 2026-06-01**（squash・pin→main と同日）。検証実施は 6/1 以前で v1 時代に
-   跨がる可能性。公開 v2 checkpoint の golden 合格は誰も検証していない可能性が高い
-   （CI は numeric golden 対象外）
+| run | 重み | golden MSE | 判定 |
+|---|---|---:|---|
+| v1_ckpt_e4_20260728 | v1_midtrain iter12000 EMA | **0.248372** | FAIL |
+| classmethod_policy_framework | v2_midtrain（最適化前） | 0.126471 | FAIL |
+| 記事（DGX Spark） | 不明 | 0.013194 | PASS |
 
-### 議論の確定事項（/dls-discuss「元実装で精度は出ている？」）
+- v1 は v2 の約 2 倍悪い。記事が v1 で 0.013 を出していたなら 19 倍乖離する計算になり、
+  「公開前 squash 窓での checkpoint 差し替えが原因」という DLS-013 の主線は成立しない
+- **ロード自体は正しい**（FAIL の非識別性を一部潰した）: 1165 key 全数が写像・shape/dtype
+  一致、ローダは missing_keys で例外を投げるがログに警告なし、出力が v2 比 MSE 0.149132
+  動いた（v2 同士の run 間ノイズ 0.001301 の 100 倍超）
+- **DLS-013 の「別 checkpoint」判定を訂正**: 全 1165 tensor 比較で相対差の中央値 0.0128、
+  43 tensor は bitwise 一致。実態は同一系統の継続学習で、差は生成（moe_gen / diffusion
+  expert）経路に集中（action2llm 39.9% / time_embedder 38.8% / action_modality_embed 33.5%）
+- 残る交絡: v1 の config.json と現行 yaml の意味論差（qk_norm_for_text 等）。ただし v1 の
+  q_norm 重みが学習済みかつ v2 とほぼ同値のため小さいと判断し dormant 化（DLS-014）
 
-- (a) 最適化前の本環境コード: 不合格 0.126471（確定） / (b) 記事環境: 第三者による公式 golden
-  照合で合格 0.013194 / (c) 現公開コード + CUDA: 未検証
-- 記事の 0.013194 は「自己申告」ではなく元リポジトリの公式 golden・公式メトリクスとの照合実測
-  （golden_mse_max 0.05 への言及で確証）
+### 公開 v2 に policy 精度の基準値が存在しないこと（議論ノート化済み）
+
+- `golden_mse_max = 0.05` は inputs JSON に**データとして書かれているだけ**で、
+  framework 内にこれを読む Python コードが 1 行も無い
+- `tests/nano_inference_smoke_test.py` は "Smoke-level only (output validity, not
+  numeric goldens)" と明記。数値 golden を持つ `launch_regression_test.py` は学習時の
+  loss / grad-norm 用で推論出力とは無関係
+- HF 公式の action ベンチマーク（`images/benchmark-action-1.png`）は **ID/FD のみ**で
+  policy 指標なし
+- → 本環境の 12 run は「再現失敗」ではなく **v2 policy 精度の事実上の初回測定**に近い
+
+### カーネルキャッシュ永続化（DLS-015）
+
+- MIOpen / TorchInductor / Triton の 3 種を `scripts/run_cosmos_framework_policy_docker.sh`
+  でホストへ持ち越し（`CACHE_DIRS=0` で無効化可）
+- プローブ実測（conv3d 2 形状）: 全体 15.75s → 13.48s（−14%）、大 conv 初回 10.76s → 8.52s（−21%）
+- ホストの `~/.cache/miopen/3.5.1.5b515cf1bc/gfx1151_20.ukdb` が 188KB → 270KB に増加し
+  永続化を確認。**Policy 本体での短縮幅は未測定**
 
 ## 完了済み（今セッション）
 
-- tokenizer pin 法医学調査一式（pin 特定 → squash 発見 → shim branch 発掘 → oid/blob 照合 →
-  tensor バイト照合 → golden 正体特定 → 記事日付特定）→ DLS-013 + 原本
-- todo.md 更新: E4（v1 重み ROCm 照合）を最上位に追加、CUDA 参照 run を後続に格下げ
+- E4 一式（重み 30GB 取得 → index 絶対パス修正 → ロードスモーク → golden 照合 run → 採点 →
+  全 tensor 比較）→ DLS-014 + 原本
+- framework 実行コンテナの repo 化（`docker/cosmos3-rocm72-framework.Dockerfile`、
+  `scripts/run_cosmos_framework_policy_docker.sh`）→ DLS-015
+- カーネルキャッシュ永続化の実装と効果測定（`scripts/probe_kernel_cache_persistence.py`）
+- `run_cosmos_framework_policy_rocm.py` に `--policy-checkpoint-dir` を追加
+- 議論ノート `20260728_chat_v2_accuracy_reference_absence.md` を保存し
+  DLS-011 / 013 / 014 の sources に追記
+- コミット `713386e`、todo.md の完了 2 件を削除
 
 ## 次のアクション
 
@@ -56,21 +75,28 @@ DLS-123: 本ファイルは **文脈・状態の運搬** に専念する。タ�
 
 ## ブロッカー・注意事項
 
-- **E4 実行はユーザー承認待ち**（30GB DL + GPU 実行 + tensor リネーム移植）。
-  FAIL はロード誤りと識別不能（PASS のみが情報を持つ）— 撤退ラインを事前設定すること
-- **未 push**: main が origin/main より先行
-- README「同一条件」表現の訂正は E4 / CUDA run の帰属確定まで保留が安全（前回から不変）
-- a18b727 の内容直接照合は永久に不可能（squash で消滅）。二重反転（a18b727 だけ tokenizer が
-  違った可能性）は原理的に排除できないが、前後（5/13 と 6/1）で一致しており蓋然性は低い
-- Bash 出力が空になる事象が今セッションも散発（git status / date で再現）。
-  回避策: 再実行 or ファイルにリダイレクトして Read
-- 記事 HTML・tensor 照合スクリプト（cmp_tensor.py）・index json 類はセッション scratchpad に
-  あり消える。再現手段は原本 §8 に記録済み
+- **CUDA 参照 run は環境調達が必要でユーザー判断待ち**（AWS g6e.xlarge L40S 等）。
+  E4 が仮説を棄却したため、これが残る唯一の決着手段
+- **未 push**: main が origin/main より 12 コミット先行
+- **次の Policy run では 2 点を必ず確認する**: (1) golden MSE が既存帯 0.126〜0.134 に
+  入るか（キャッシュ持ち越しで MIOpen のアルゴリズム選択が変わりうるため。外れたら
+  `CACHE_DIRS=0` に戻す）、(2) コールドスタートの短縮幅
+- **`--config-file` / `--model-size` は CLI から使えない**: `Training[...]` 注釈のため
+  `COSMOS_TRAINING=0`（スクリプトが設定）では tyro から Suppress される。checkpoint の
+  差し替えは `--policy-checkpoint-dir` を使う
+- README「同一条件」表現の訂正は CUDA 参照 run / guidance 検証の結果待ちで保留（不変）
+- `result/` は git 管理外。E4 の成果物は `result/v1_ckpt_e4_20260728/` にのみ存在する
+- v1 重み 30GB は `/home/kabayan/workspace/cosmos3_v1_ckpt/`（repo 外、git 管理外）。
+  index.json の vision_encoder 絶対パスは相対へ修正済み。再取得するなら
+  HF `nvidia/Cosmos3-Nano` revision `35c5cd345afeefabbdebcdc6089f5e5be3402d0f`
+- Bash 出力が空になる事象は今セッションも散発。回避策: ファイルへリダイレクトして Read
 
 ## 関連ファイル
 
-- `.claude/.dls/active.md`（DLS-001〜003, 005〜013。DLS-004 は experiment ブランチ側）
-- `.claude/.dls/raw/20260727_doc_tokenizer_pin_forensics_and_v1v2_checkpoint_swap.md`（今回の原本）
-- `.claude/.dls/raw/20260727_doc_policy_golden_mse_precision_sweep.md`（E1〜E3、前提知見)
-- `tasks/todo.md`（E4 タスク最上位）
-- HF: `nvidia/Cosmos3-Nano` branch `spectralflight/shim` rev `35c5cd345`（v1 重み、E4 の取得元）
+- `.claude/.dls/active.md`（DLS-001〜003, 005〜015。DLS-004 は experiment ブランチ側）
+- `.claude/.dls/raw/20260728_doc_e4_v1_checkpoint_golden_verification.md`（E4 原本）
+- `.claude/.dls/raw/20260728_chat_v2_accuracy_reference_absence.md`（議論ノート）
+- `scripts/run_cosmos_framework_policy_docker.sh` / `docker/cosmos3-rocm72-framework.Dockerfile`
+- `scripts/run_cosmos_framework_policy_rocm.py`（`--policy-checkpoint-dir`）
+- `scripts/check_policy_golden_mse.py`（採点）、`scripts/probe_kernel_cache_persistence.py`
+- `tasks/todo.md`（CUDA 参照 run が最上位）

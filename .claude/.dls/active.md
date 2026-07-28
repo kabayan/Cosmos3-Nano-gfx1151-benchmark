@@ -28,7 +28,7 @@
   - business: DLS-013 が最有力とした機構が消えたことで、golden 不合格の原因候補から上流の checkpoint 差し替えが外れる。残る決着手段は CUDA 参照 run に戻り、README の「同一条件」表現の訂正判断もその結果待ちで維持される
   - constraint: 事前登録どおり FAIL はロード誤りと真の不一致を識別しない。ただし本 run では (1) 1165 key 全数の写像・shape・dtype 一致を事前スモークで確認、(2) ローダは missing_keys があれば例外を投げるがログに警告なし、(3) 出力が v2 比 MSE 0.149132 動いた（v2 同士の run 間ノイズ 0.001301 の 100 倍超）ことから、「重みが読まれなかった」線までは潰せている。v1 の config.json には現行 yaml との意味論差（qk_norm_for_text 等）が残り、これは交絡として残存する
 - **where**: result/v1_ckpt_e4_20260728/（golden MSE 0.248372）、/home/kabayan/workspace/cosmos3_v1_ckpt/（shim 35c5cd345 の重み、index.json の vision_encoder 絶対パスを相対へ修正済）、scripts/run_cosmos_framework_policy_rocm.py（`--policy-checkpoint-dir`）、/tmp/cosmos-framework/cosmos_framework/inference/model.py（`_DIFFUSERS_KEY_MAPPING_RES`）、同 model/vfm/mot/unified_mot.py（L470 qk_norm_for_text による q_norm/k_norm の Identity 化）
-- **sources**: .claude/.dls/raw/20260728_doc_e4_v1_checkpoint_golden_verification.md
+- **sources**: .claude/.dls/raw/20260728_doc_e4_v1_checkpoint_golden_verification.md, .claude/.dls/raw/20260728_chat_v2_accuracy_reference_absence.md
 - **requested_by**: ユーザー（E4 実行承認 2026-07-27、「ダウンロードが終わったら照合 run を実行して」2026-07-28）
 - **depends_on**: DLS-013
 - **affects**: DLS-013（assumption「記事は v1 時代の重みで golden 照合した可能性があり、公開 v2 が golden を満たすかは誰も検証していない」の前半を棄却。後半（v2 の policy 精度は公式にも第三者にも測定記録が無い）は本セッションの調査で逆に補強された）, DLS-012（assumption「差は上流の版差」の具体機構から checkpoint 差し替えが外れ、CUDA 参照 run の優先度が戻る）, DLS-011（原因候補リストから checkpoint 版差を除外）
@@ -51,7 +51,7 @@
   - business: DLS-012 の assumption「上流版差」（confidence: medium）を具体的機構（checkpoint 差し替え）まで絞り込めた。E4 が PASS すれば「ROCm 移植は品質中立」を assumption から実証に格上げでき、CUDA 環境調達なしで決着する
   - constraint: v1 重みは旧 tensor 名（814 key 全面リネーム、ただし key 数は v2 と同一の 1165）+ 旧 config 形式で公開コードに直接載らない。E4 の FAIL はロード誤りと真の不一致を識別できず、PASS のみが情報を持つ（リスク非対称）。a18b727 自体は squash で消滅済みのため内容の直接照合は永久に不可能
 - **where**: HF nvidia/Cosmos3-Nano branch spectralflight/shim（35c5cd345 = v1_midtrain iter12000 EMA、checkpoint.json に記録）、同 main（411f42a8）、cosmos-framework 1bd5fdc36（pin a18b727 初出、Cosmos3-Nano.yaml L185）/ 411d25b2e（pin→main 変更）、/tmp/cosmos-framework/inputs/omni/action_policy_robot.json（golden_action_path == action_path、cosmos-dependencies pin 2b17a2413bd8）
-- **sources**: .claude/.dls/raw/20260727_doc_tokenizer_pin_forensics_and_v1v2_checkpoint_swap.md
+- **sources**: .claude/.dls/raw/20260727_doc_tokenizer_pin_forensics_and_v1v2_checkpoint_swap.md, .claude/.dls/raw/20260728_chat_v2_accuracy_reference_absence.md
 - **requested_by**: ユーザー（「tokenizer pin の法医学的調査」2026-07-27。契機は議論中のユーザー指摘「記事によれば元のリポジトリとの精度を比較しているように見える」）
 - **depends_on**: DLS-012
 - **affects**: DLS-011（「golden は 2026-05 内部コードで生成」という前提を「golden はデータセット実測で不変、動いたのはモデル側」に訂正）, DLS-012（assumption「上流版差」の機構を checkpoint v1→v2 差し替えに具体化。本セッション議論で最有力候補に昇格していた tokenizer 代替説は棄却）
@@ -98,7 +98,7 @@
   - business: README は「生成クオリティに関わる条件を一切変更していない」ことを対外価値の土台にしているが、出力が公式合格基準を満たさない状態で速度だけを比較していたことになる。速度数値の対外主張の前提に関わる
   - constraint: run 間 pairwise MSE は最大 0.0086（55 ペア全列挙）で、golden との差 0.12 はその 14 倍。乱数変動では説明できない系統差。原因は本エントリ時点で未特定
 - **where**: result/*/action_policy_robot/sample_outputs.json（全 11 run）、/tmp/cosmos-framework/cosmos_framework/inference/metrics.py（compute_action_mse L477）、inputs/omni/action_policy_robot.json（golden_action_path / golden_mse_max）、README.md §2 NOTE、scripts/run_cosmos_framework_policy_rocm.py（_sdpa_varlen_fallback）
-- **sources**: .claude/.dls/raw/20260727_doc_policy_golden_mse_verification.md, .claude/.dls/raw/20260727_doc_policy_golden_mse_root_cause_analysis.md
+- **sources**: .claude/.dls/raw/20260727_doc_policy_golden_mse_verification.md, .claude/.dls/raw/20260727_doc_policy_golden_mse_root_cause_analysis.md, .claude/.dls/raw/20260728_chat_v2_accuracy_reference_absence.md
 - **requested_by**: ユーザー（「golden MSE の照合を先にやって」2026-07-27）
 - **depends_on**: DLS-005, DLS-006, DLS-010
 - **affects**: DLS-006（対記事 1.98 倍の速度比較は「品質合格を満たす出力同士の比較」ではないという留保が付く）, DLS-009（等価性実証の価値は保持: 最適化前後で MSE 帯が同一 = 最適化は品質に中立、の実証を兼ねる）
