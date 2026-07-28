@@ -1,5 +1,30 @@
 # DLS active エントリ
 
+## DLS-017
+- **date**: 2026-07-28
+- **what**: CFG 条件チューニングの方針として「CFG の cond/uncond を 1 回の forward にバッチ化して重み読み出しを償却する」候補を PoC 実測で棄却し、採用案を und branch cache の 2 スロット化（cond/uncond 各 1、厳密キャッシュのまま read 化を回復）に確定する。あわせて「同一計算内容の制約（DLS-003）の下で CFG 条件の価格差 2.0 到達は現実的でない」ことを実測根拠つきで確定し、チューニングの目的を「2.0 到達」から「スラッシュ由来の異常な悪化（I2V 11.33x / T2I 5.25x）の解消」に置き換える
+- **why**:
+  - origin: user_request
+  - business: DLS-016 で 2.0 到達には per-call 約 20% の追加短縮が必要と算出され、その唯一の構造的候補が CFG バッチ化だった。これが消えたことで「2.0 到達」を目標に置き続けると DLS-006 型（達成不能な基準に対して達成を主張する / 無効な方向へ工数投入する）の問題になる。目標を実現可能な線に置き換えることで、A の実装価値（I2V を 11.33x から約 2.6x へ）が正しく評価できる
+  - constraint: GEMM は実運用トークン帯（N≥672）で演算律速であり、トークン数 2 倍は所要 2 倍（ratio 平均 1.962）。バッチ化の利得は約 1.9% にとどまる。加えて cond/uncond は系列長が異なるためバッチ化しても総トークン数は不変で、「2 回呼ぶこと」ではなく「計算量が 2 倍になること」が本質。観測 GEMM スループット最大 36.11 TFLOPS は README §4 の bench_peak 実測 20.91 TFLOPS を上回り、GEMM 経路に 20% の余地が残っていないことの傍証になる
+- **where**: scripts/probe_cfg_batching_gemm.py（新規）、result/cfg_batch_probe/gemm_bf16.json、third_party/diffusers/src/diffusers/models/transformers/transformer_cosmos3.py（und branch cache L496-540 / L871-900 = A の実装先）、third_party/diffusers/src/diffusers/pipelines/cosmos/pipeline_cosmos3_omni.py（CFG L1597-1667）、/opt/diffusers（イメージ同梱版、A 実装時は third_party と同期が必要）、README.md §4（ピーク TFLOPS の位置づけ注記）
+- **sources**: .claude/.dls/raw/20260728_doc_cfg_batching_gemm_poc.md
+- **requested_by**: ユーザー（`/dls-plan CFG条件チューニング` で「B を先に PoC」を選択 2026-07-28）
+- **depends_on**: DLS-016
+- **affects**: DLS-016（「per-call 約 20% の追加短縮が本丸」という見通しに対し、その短縮を担える構造的候補が存在しないことを実測で確定。合否軸 2.0 自体は維持するが、CFG 条件下では未達が固定的な結論になる）, DLS-003（バッチ化は計算内容を変えないため対象外だったが、2.0 到達には計算省略系の解禁が必要になる可能性が出た。解禁は仕様レベルの再定義であり本エントリでは行わない）, DLS-001（「メモリ帯域の物理限界」結論は Policy サンプリング経路のもの。diffusers 経路の GEMM は演算律速であり、律速要因がモードで異なることを明確化）
+- **rejected_hypothesis**:
+  - target: DLS-016（rejected_alternatives で次アクション候補としていた「per-call 約 20% の追加短縮策」のうち、唯一具体化されていた構造的候補）
+  - hypothesis: CFG の cond/uncond を 1 回の forward にバッチ化すれば重み読み出しが償却され、per-call を 2.0 到達に必要な約 20% 短縮できる
+  - reason: GEMM マイクロベンチ（実形状 4 種 × トークン数 5 種、TunableOp 無効で土台を統一）でトークン数 2 倍の所要比 ratio = 全体平均 1.926 / 実運用帯 N≥672 で 1.962。達成 TFLOPS が N と 2N でほぼ不変（ffn_up N=672: 31.42→31.53 TF）かつ GB/s が単調低下する演算律速の署名が明確で、バッチ化の利得は約 1.9%。さらに cond/uncond は系列長が異なるためバッチ化しても総トークン数は不変であり、利得の源泉自体が存在しない
+- **rejected_alternatives**:
+  - A と B の同時採用: B が棄却されたため成立しない
+  - C（T2V への und cache 適用）: T2V の 2.53x は cache 無関係の純粋な計算量 2 倍であり、削れるのは und 枝の再計算分のみで効果が限定的。A の実測効果を見てから再評価する。dormant
+  - 計算省略系（TeaCache 等）を CFG 条件の 2.0 到達に解禁する: DLS-003 でユーザーが「計算内容の省略は元記事との比較前提を壊す」として棄却済み。本エントリでは再提案しない（2.0 到達を目的化するなら仕様レベルの supersede が必要）
+  - 何もしない（チューニングを見送り README 両条件併記のみ）: I2V の 11.33x はスラッシュという実装上の欠陥に由来し、修正が厳密（近似ではない）かつ効果が大きいため見送る理由が無い。dormant ではなく不採用
+- **commits**:
+  - baseline: 6c94fd6
+- **assumption**: A（2 スロット化）で T2I ≈2.4x / I2V ≈2.6x まで回復するという概算は、guidance 1.0 時の cache read 経路の per-call（T2I 0.356 / I2V 0.279 秒）が CFG 下でも同値で再現することを前提にしている（confidence: medium。cond/uncond で系列長が異なるため uncond 側は軽い可能性があり、その場合は概算より良くなる。反証手段は A 実装後の実測 1 run）。GEMM PoC は attention・正規化・要素演算を含まないが、系列長 2 倍で attention は O(L²) 成分により 2 倍以上になるため結論は保守側（confidence: high）
+
 ## DLS-016
 - **date**: 2026-07-28
 - **what**: 対外比較の合否軸を「対記事倍率 1.5 倍以内」から「価格差 2.0 倍以内」に変更し、DLS-010 で dormant だった guidance 条件不一致を公式デフォルト実測（T2I 4.0 / T2V・I2V 6.0）で解消する。「guidance 1.0 での倍率（1.23x/1.46x/1.47x)は記事側条件でも維持される」という暗黙の前提を実測で棄却する — 公式 guidance 条件では T2V 2.53x / T2I 5.25x / I2V 11.33x で 3 モードとも 2.0 超過。あわせて T2I/I2V の悪化主因が und branch cache の CFG 下全スラッシュ（単一スロット署名、140 calls / 140 writes / 0 reads）であることを特定する
