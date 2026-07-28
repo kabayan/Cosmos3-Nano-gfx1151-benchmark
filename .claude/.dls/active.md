@@ -1,5 +1,29 @@
 # DLS active エントリ
 
+## DLS-016
+- **date**: 2026-07-28
+- **what**: 対外比較の合否軸を「対記事倍率 1.5 倍以内」から「価格差 2.0 倍以内」に変更し、DLS-010 で dormant だった guidance 条件不一致を公式デフォルト実測（T2I 4.0 / T2V・I2V 6.0）で解消する。「guidance 1.0 での倍率（1.23x/1.46x/1.47x)は記事側条件でも維持される」という暗黙の前提を実測で棄却する — 公式 guidance 条件では T2V 2.53x / T2I 5.25x / I2V 11.33x で 3 モードとも 2.0 超過。あわせて T2I/I2V の悪化主因が und branch cache の CFG 下全スラッシュ（単一スロット署名、140 calls / 140 writes / 0 reads）であることを特定する
+- **why**:
+  - origin: user_request
+  - business: 評価軸が「DGX Spark との速度差が価格差（≤2.0）に収まるか」に確定した。記事が公式デフォルト guidance で実行していた場合、現行 README の倍率は CFG 無効 vs 有効の不公平比較（本環境が約半分の計算量）であり、価格差以内という結論を出す土台にならない。今回の実測で 1.0 / 公式値の両条件が揃い、assumption がどちらに倒れても対応する実測値が存在する状態になった。現時点の結論は「公式 guidance 条件では収まらない」で、これをベースにチューニングを進める（ユーザー方針）
+  - constraint: CFG は逐次 2 回 forward 実装（バッチ倍増ではない）のため TunableOp 表は有効なまま（T2V の s/call 0.767→0.718 が直接証拠）。T2V のクリーン実測 2.53x から CFG 条件のハードウェア素比は約 2.5 倍と推定され、und cache を修復しても T2I ≈2.4x / I2V ≈2.6x 見込みで 2.0 以内には追加の per-call 短縮約 20% が必要。記事の実際の guidance は依然未確認（DLS-010 assumption 継承）。negative prompt はスクリプト既存値で公式 neg_prompts.json と異なり uncond 系列長が短い
+- **where**: result/guidance_official_20260728/（run_commands.sh・summary・出力 jpg/mp4）、scripts/benchmark_classmethod_article_t2i_rocm.py / benchmark_classmethod_article_t2v_i2v_rocm.py（--guidance）、third_party/diffusers/src/diffusers/models/transformers/transformer_cosmos3.py（und cache L871-900）、third_party/diffusers/src/diffusers/pipelines/cosmos/pipeline_cosmos3_omni.py（CFG L1597-1667）、README.md §2（倍率表と NOTE）
+- **sources**: .claude/.dls/raw/20260728_doc_guidance_official_measurement.md, .claude/.dls/raw/20260728_chat_v1v2_accuracy_and_price_criterion.md
+- **requested_by**: ユーザー（「価格差は2以内でよいとする」「--guidance 6.0 実測で潰すことは実施したい（速度、精度とも）」2026-07-28）
+- **depends_on**: DLS-007, DLS-010
+- **affects**: DLS-010（dormant「README 倍率の訂正方向はユーザー判断と実測を待つ」を実測完了で解消。assumption「記事は公式デフォルト guidance」は confidence medium のまま維持）, DLS-007（公表値 3 モードの再現有効性は不変。ただし位置づけは「guidance 1.0 という条件限定の値」に限定される）, DLS-006（合否軸の変更により Policy 生成 1.98x は新基準 2.0 の内側に入る。conditioning 込み 2.02x は境界上）, DLS-011（記事の per-step MSE チャート発見により「記事側出力も step 6-7 で per-step 0.05 超過があり、全体 0.0132 は 2 step 以外ほぼゼロという構造での合格」と判明。本環境 v2 の最大逸脱も同じ step 6-7 で値は約 4.5 倍 + 広帯域誤差。精度の素の提示に併記する一次情報）
+- **rejected_hypothesis**:
+  - target: DLS-010（assumption の帰結として README 倍率が同一条件比較として成立している可能性）
+  - hypothesis: 記事側が公式デフォルト guidance であっても、本環境を同条件に揃えれば倍率帯 1.2〜1.5x は維持される
+  - reason: 実測で T2V 2.53x / T2I 5.25x / I2V 11.33x。CFG の逐次 2 回 forward で transformer 呼び出しが純増 2 倍、さらに und branch cache が cond/uncond の署名交互不一致で全 write 化し T2I の s/call が 4.5 倍・I2V が 9.6 倍に悪化するため
+- **rejected_alternatives**:
+  - und cache を無効化 or 2 スロット化してから公式 guidance を測る: 先に現行公開構成のままの正直な値を記録する方が、後のチューニング効果の帰属が明確になる。2 スロット化・T2V への cache 適用・何もしない、の採否は /dls-plan で扱う（次アクション候補）
+  - 記事側を guidance 1.0 と仮定して現行 README を維持する: 記事は公式サンプル JSON 準拠を明言しており公式デフォルトは 4.0/6.0。1.0 と仮定する根拠が無い。両条件併記の方向へ
+  - 何もしない: DLS-010 で条件不一致リスクが指摘済みのまま倍率を対外主張し続けるのは DLS-006 型問題の再演になるため不採用
+- **commits**:
+  - baseline: 28781ba
+- **assumption**: 記事は公式デフォルト guidance（T2I 4.0 / T2V・I2V 6.0 相当）で実行した（DLS-010 から継承、confidence: medium。guidance 4.0 の T2I 出力品質が 1.0 と別クラスであることは、記事の「実用品質」記述と公式デフォルト実行の整合を傍証する）。速度値は各条件 measured 1 run だが、DLS-007 で同プロトコルの再現性 ±0.6% を確認済みで measured run の unattributed は 1.2 秒（confidence: medium-high。反証手段は同条件再実行）
+
 ## DLS-015
 - **date**: 2026-07-28
 - **what**: cosmos-framework 経路の実行コンテナ定義（イメージ + 起動ラッパー）を repo の成果物として確定し、あわせてカーネル探索・コンパイル結果を毎 run 捨てていた状態を解消してホストへ持ち越すようにする。持ち越しは実行方法のキャッシュであり計算内容を変えないため、DLS-003 の計算省略系には該当しないものとして扱う

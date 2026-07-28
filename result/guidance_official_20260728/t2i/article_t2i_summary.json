@@ -1,0 +1,133 @@
+{
+  "model": "nvidia/Cosmos3-Nano",
+  "dtype": "float16",
+  "load_seconds": 6.475,
+  "case": "article_t2i_robotics_lab",
+  "seconds": 115.589,
+  "output": "result/guidance_official_20260728/t2i/article_t2i_robotics_lab_960x960_s35_measured_r2.jpg",
+  "prompt_source": "/workspace/tmp/cosmos-framework/inputs/omni/t2i.json",
+  "warmup": {
+    "enabled": true,
+    "seconds": 667.4,
+    "latent_shape": [
+      1,
+      48,
+      1,
+      60,
+      60
+    ],
+    "latent_dtype": "torch.float16",
+    "stage_profile": {
+      "vae_decode": {
+        "seconds": 667.4,
+        "calls": 1
+      }
+    }
+  },
+  "mode_warmup_runs": 1,
+  "measured_runs": 1,
+  "runs": [
+    {
+      "case": "article_t2i_robotics_lab",
+      "run": 1,
+      "measurement_role": "warmup",
+      "seconds": 224.825,
+      "output": "result/guidance_official_20260728/t2i/article_t2i_robotics_lab_960x960_s35_warmup_r1.jpg",
+      "prompt_source": "/workspace/tmp/cosmos-framework/inputs/omni/t2i.json",
+      "stage_profile": {
+        "enabled": true,
+        "records": {
+          "transformer_forward": {
+            "seconds": 113.399,
+            "calls": 70
+          },
+          "vae_decode": {
+            "seconds": 2.398,
+            "calls": 1
+          },
+          "video_postprocess": {
+            "seconds": 0.009,
+            "calls": 1
+          }
+        },
+        "timed_stage_sum_seconds": 115.806,
+        "unattributed_pipe_seconds": 109.019
+      },
+      "settings": {
+        "height": 960,
+        "width": 960,
+        "frames": 1,
+        "steps": 35,
+        "guidance": 4.0,
+        "seed": 201
+      }
+    },
+    {
+      "case": "article_t2i_robotics_lab",
+      "run": 2,
+      "measurement_role": "measured",
+      "seconds": 115.589,
+      "output": "result/guidance_official_20260728/t2i/article_t2i_robotics_lab_960x960_s35_measured_r2.jpg",
+      "prompt_source": "/workspace/tmp/cosmos-framework/inputs/omni/t2i.json",
+      "stage_profile": {
+        "enabled": true,
+        "records": {
+          "transformer_forward": {
+            "seconds": 113.254,
+            "calls": 70
+          },
+          "vae_decode": {
+            "seconds": 1.762,
+            "calls": 1
+          },
+          "video_postprocess": {
+            "seconds": 0.007,
+            "calls": 1
+          }
+        },
+        "timed_stage_sum_seconds": 115.023,
+        "unattributed_pipe_seconds": 0.566
+      },
+      "settings": {
+        "height": 960,
+        "width": 960,
+        "frames": 1,
+        "steps": 35,
+        "guidance": 4.0,
+        "seed": 201
+      }
+    }
+  ],
+  "comparison_target": {
+    "source": "Classmethod DGX Spark article",
+    "t2i": "960x960, 35 steps, model resident after about 22 sec"
+  },
+  "settings": {
+    "height": 960,
+    "width": 960,
+    "frames": 1,
+    "steps": 35,
+    "guidance": 4.0,
+    "seed": 201
+  },
+  "runtime_options": {
+    "stage_profile": true,
+    "rocprof_transformer_only": false,
+    "allow_pipeline_error": false,
+    "abort_before_vae_decode": false,
+    "linear_profile": false,
+    "und_branch_cache": true
+  },
+  "linear_profile": {
+    "enabled": false
+  },
+  "und_branch_cache": {
+    "enabled": true,
+    "transformer_calls": 140,
+    "write_calls": 140,
+    "read_calls": 0,
+    "invalidations": 140,
+    "cached_layers": 36,
+    "cache_gib": 0.021
+  }
+}

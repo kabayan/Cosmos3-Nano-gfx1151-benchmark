@@ -1,0 +1,142 @@
+{
+  "model": "nvidia/Cosmos3-Nano",
+  "dtype": "float16",
+  "load_seconds": 7.611,
+  "comparison_target": {
+    "source": "Classmethod DGX Spark article",
+    "t2v": "256p, 24 frames, 12 fps, model resident after about 22 sec",
+    "i2v": "official sample image/prompt, article reported about 17 sec"
+  },
+  "warmup": {
+    "enabled": true,
+    "seconds": 369.978,
+    "latent_shape": [
+      1,
+      48,
+      2,
+      16,
+      28
+    ],
+    "latent_dtype": "torch.float16",
+    "stage_profile": {
+      "vae_decode": {
+        "seconds": 369.978,
+        "calls": 1
+      }
+    }
+  },
+  "tunableop_config": {
+    "enabled": false,
+    "requested": {
+      "max_tuning_duration": null,
+      "max_tuning_iterations": null,
+      "rotating_buffer_size": null
+    },
+    "applied": {}
+  },
+  "runtime_options": {
+    "inference_mode": false,
+    "disable_progress_bar": false,
+    "stage_profile": true,
+    "allow_pipeline_error": false,
+    "abort_before_vae_decode": false,
+    "force_vae_encode_sdpa_math": false,
+    "cosmos3_transformer_attention_fallback": false,
+    "linear_profile": false,
+    "transformer_input_profile": false,
+    "und_branch_cache": false
+  },
+  "results": [
+    {
+      "case": "article_t2v_red_cube_grasp",
+      "mode_warmup_runs": 1,
+      "measured_runs": 1,
+      "runs": [
+        {
+          "case": "article_t2v_red_cube_grasp",
+          "seconds": 109.942,
+          "export_seconds": 0.151,
+          "stage_profile": {
+            "enabled": true,
+            "records": {
+              "transformer_forward": {
+                "seconds": 50.44,
+                "calls": 70
+              },
+              "vae_decode": {
+                "seconds": 4.123,
+                "calls": 1
+              },
+              "video_postprocess": {
+                "seconds": 0.032,
+                "calls": 1
+              }
+            },
+            "timed_stage_sum_seconds": 54.595,
+            "unattributed_pipe_seconds": 55.347
+          },
+          "output": "result/guidance_official_20260728/t2v/article_t2v_red_cube_256p_24f_s35.mp4",
+          "prompt_source": "Classmethod article text: gripper grasps and slowly lifts a red cube",
+          "settings": {
+            "height": 256,
+            "width": 448,
+            "frames": 24,
+            "fps": 12,
+            "steps": 35,
+            "guidance": 6.0,
+            "seed": 202
+          },
+          "run": 1,
+          "measurement_role": "warmup"
+        },
+        {
+          "case": "article_t2v_red_cube_grasp",
+          "seconds": 55.561,
+          "export_seconds": 0.091,
+          "stage_profile": {
+            "enabled": true,
+            "records": {
+              "transformer_forward": {
+                "seconds": 50.251,
+                "calls": 70
+              },
+              "vae_decode": {
+                "seconds": 4.09,
+                "calls": 1
+              },
+              "video_postprocess": {
+                "seconds": 0.019,
+                "calls": 1
+              }
+            },
+            "timed_stage_sum_seconds": 54.36,
+            "unattributed_pipe_seconds": 1.201
+          },
+          "output": "result/guidance_official_20260728/t2v/article_t2v_red_cube_256p_24f_s35.mp4",
+          "prompt_source": "Classmethod article text: gripper grasps and slowly lifts a red cube",
+          "settings": {
+            "height": 256,
+            "width": 448,
+            "frames": 24,
+            "fps": 12,
+            "steps": 35,
+            "guidance": 6.0,
+            "seed": 202
+          },
+          "run": 2,
+          "measurement_role": "measured"
+        }
+      ],
+      "selected_seconds": 55.561
+    }
+  ],
+  "linear_profile": {
+    "enabled": false
+  },
+  "transformer_input_profile": {
+    "enabled": false
+  },
+  "und_branch_cache": {
+    "enabled": false
+  }
+}
