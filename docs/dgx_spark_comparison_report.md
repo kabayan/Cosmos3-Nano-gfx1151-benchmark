@@ -1,59 +1,106 @@
-# DGX Spark (Blackwell GB10) vs. 本環境 (Radeon gfx1151) パフォーマンス比較レポート
+# DGX Spark (GB10) と Radeon 8060S (gfx1151) の GEMM 比較
 
-ブログ記事 [DGX Sparkで見る“デスクサイドAI”の実力 ― FP16/BF16/FP32/FP64でGB10性能を検証](https://www.hpc.co.jp/tech-blog/2026/03/17/dgx-spark-desk-side/) で実施されている行列乗算ベンチマーク（行列サイズ 16384 × 16384）と同一の条件にて、本環境（Radeon 8060S / gfx1151）の演算性能（TFLOPS）を測定し、比較検証を行いました。
+## 1. 結論
 
----
+固定 `16384 × 16384` の `torch.mm` では、DGX Spark (GB10) は本環境の Radeon 8060S / gfx1151 に対して FP16/BF16 で約 4.6〜4.8 倍高速だった。この値は**同じ単一形状における各 software stack 込みの実測差**として有効だが、GPUの一般的な最大行列積性能差を意味しない。
 
-## 1. 測定環境スペック
+外部の直接比較では、形状を走査して最高到達値を探す MAMF（Max Achievable MatMul FLOPS）で BF16 が GB10 101 TFLOPS、Strix Halo 46 TFLOPS、差は約 2.2 倍だった。本環境でも Cosmos3 の実形状では最大 36.11 TFLOPSを観測している。
 
-| 項目 | DGX Spark (ブログ検証環境) | 本環境 |
-| :--- | :--- | :--- |
-| **GPU** | NVIDIA GB10 (Grace Blackwell) | AMD Radeon (gfx1151: RDNA3/4世代) |
-| **VRAM** | 128GB (LPDDR5X 共有メモリ) | 120GB (システム共有/専用領域) |
-| **OS / Runtime** | Linux / CUDA 12.x / PyTorch | Linux / ROCm 7.2 / PyTorch 2.9.1 |
+したがって、固定16384角で観測した4.63倍差には、ハードウェア規模だけでなく**行列形状、選択されたkernel、CUDA/cuBLASとROCm/hipBLASLtの実装差**が含まれる。「CUDAがあるから4.63倍」と単一要因へ帰属させることはできない。
 
----
+## 2. 比較対象
 
-## 2. 測定結果および比較
+| 項目 | DGX Spark | 本環境（EVO-X2） |
+|---|---|---|
+| SoC / GPU | NVIDIA GB10 Grace Blackwell | AMD Ryzen AI Max+ 395 / Radeon 8060S |
+| GPU architecture | Blackwell | RDNA 3.5 (`gfx1151`) |
+| 行列演算経路 | Tensor Core / CUDA / cuBLAS | WMMA系 / ROCm / rocBLAS・hipBLASLt |
+| unified memory | 128GB LPDDR5X | 128GB LPDDR5X（GPU割当は環境設定依存） |
+| memory interface | 256-bit | 256-bit |
+| runtime | CUDA 12.x / PyTorch | ROCm 7.2 / PyTorch 2.9.1 |
 
-本環境での測定は、作成したベンチマークスクリプト `scripts/bench_peak.py` を Docker コンテナ内で実行して取得しました。
+PyTorch ROCm は互換APIとして `torch.cuda` 名前空間を使用するが、実体はNVIDIA CUDAではない。`scripts/bench_peak.py` の `torch.mm` は、各環境でそれぞれのGPU行列積libraryへdispatchされる。
 
-### パフォーマンス比較表
+## 3. 固定16384角の比較
 
-| 精度フォーマット | DGX Spark (GB10) 実測値 | 本環境 (gfx1151) 実測値 | 性能比 (GB10 / 本環境) |
-| :--- | :---: | :---: | :---: |
-| **FP16 (Half)** | 96.54 TFLOPS | **20.04 TFLOPS** | **4.82 倍** |
-| **BF16 (BFloat16)** | 96.91 TFLOPS | **20.91 TFLOPS** | **4.63 倍** |
-| **FP32 (Single)** | 18.54 TFLOPS | **2.86 TFLOPS** | **6.48 倍** |
-| **FP64 (Double)** | 0.42 TFLOPS | **0.45 TFLOPS** | **0.93 倍** (本環境が優位) |
+GB10側はHPCシステムズの記事「[DGX Sparkで見る“デスクサイドAI”の実力](https://www.hpc.co.jp/tech-blog/2026/03/17/dgx-spark-desk-side/)」、gfx1151側は `scripts/bench_peak.py` の実測である。
 
-> [!NOTE]
-> * ベンチマーク条件：行列サイズ 16384 × 16384、バッチ連続 `torch.mm` 実行。
-> * イテレーション数：FP16/BF16 = 50回、FP32 = 10回、FP64 = 5回（すべて同期処理）。
+| 精度 | GB10 | Radeon 8060S / gfx1151 | GB10 / gfx1151 |
+|---|---:|---:|---:|
+| FP16 | 96.54 TFLOPS | 20.04 TFLOPS | 4.82倍 |
+| BF16 | 96.91 TFLOPS | 20.91 TFLOPS | 4.63倍 |
+| FP32（TF32無効） | 18.54 TFLOPS | 2.86 TFLOPS | 6.48倍 |
+| FP64 | 0.42 TFLOPS | 0.45 TFLOPS | 0.93倍 |
 
----
+測定条件:
 
-## 3. 詳細分析と考察
+- 行列サイズ: `16384 × 16384`
+- warmup: 3回
+- measured: FP16/BF16 50回、FP32 10回、FP64 5回
+- 演算: `torch.mm`
+- 測定区間の前後でGPU同期
+- FLOP数: `2 × M × N × K`
 
-### ① FP16/BF16（AI半精度演算）
-* **DGX Spark (GB10)**: Tensor Core が有効に動作し、**約 97 TFLOPS** を記録。
-* **本環境 (gfx1151)**: WMMA (Wave Matrix Multiply-Accumulate) 等の行列演算ユニットが駆動し、**約 20〜21 TFLOPS** を記録。
-* **考察**: GB10 は本環境に対して **約 4.6〜4.8倍** 高速です。これは Blackwell の圧倒的な AI 演算密度とメモリ帯域幅によるものですが、本環境のモバイル/ミドルクラスGPUにおいても、行列演算アクセラレータの恩恵により FP32 性能（2.86 TFLOPS）に対して **約 7.3 倍の高速化** が実効値として得られている点は評価できます。
+この結果から分かるのは、GB10がこの固定形状で高い利用率を達成していることと、Radeon側もFP16/BF16でFP32比約7倍のWMMA効果を得ていることである。FP64の逆転は、精度ごとに演算器配分が異なることを示しており、「CUDAの有無が全精度を一様に速くする」という説明とは整合しない。
 
-### ② FP32（単精度演算）
-* **DGX Spark (GB10)**: **18.54 TFLOPS**（TF32 無効化時）。
-* **本環境 (gfx1151)**: **2.86 TFLOPS**。
-* **考察**: CUDAコアとStream Processorの純粋な並列演算器数の差が反映され、GB10 が **約 6.5倍** 高速です。
+## 4. 外部の類似GEMMベンチ
 
-### ③ FP64（倍精度演算）での逆転現象
-* **DGX Spark (GB10)**: **0.42 TFLOPS**。
-* **本環境 (gfx1151)**: **0.45 TFLOPS**。
-* **考察**: 
-  * 倍精度（FP64）において、**本環境が DGX Spark を約 7% 上回る** という非常に興味深い結果となりました。
-  * これは NVIDIA の AI 特化型アーキテクチャ（Blackwell 等）の設計思想に起因します。GB10 では、AI ワークロードでほぼ使われない FP64 演算器が物理的に極端に制限されており、FP32 に対して **1:44** 程度のスループット比率に抑えられています。
-  * 一方、本環境の RDNA3/4 アーキテクチャはコンシューマ/一般向けであり、FP64 演算機能の削減割合がそこまで極端ではありません（本環境の実測値では FP32 比で **約 1:6.4** の実効スループットを維持）。この結果、科学技術計算で用いられる純粋な倍精度行列演算においては、モバイル/ミドルクラスの本環境がデスクサイドAIフラグシップを僅かに凌駕するという結果になりました。
+### 4.1 両機を直接測定したMAMF
 
----
+[The Registerの直接比較](https://www.theregister.com/on-prem/2025/12/25/tested_amds_strix_halo_vs_nvidias_dgx_spark/2098514) は、DGX SparkとStrix Halo搭載HP Z2 Mini G1aを同一記事内で測定している。
 
-## 4. 結論
-本環境（Radeon gfx1151）は、AI 向けの低精度（FP16/BF16）において DGX Spark (GB10) の **約 21%**（1/5弱）の実効性能を達成しており、デスクサイドで軽量なLLMや画像生成モデル（Cosmos3-Nano等）の推論を試作・動作させるには十分実用的なポテンシャルを持っていることが確認されました。また、アーキテクチャの特性上、FP64においては特化型AIチップを凌駕する性能ポテンシャルを有しています。
+| BF16 MAMF | 実測 | 対理論値（記事推定） |
+|---|---:|---:|
+| GB10 | 101 TFLOPS | 約81%（理論125 TFLOPS） |
+| Strix Halo / Radeon 8060S | 46 TFLOPS | 約82%（理論約56 TFLOPS） |
+| 比率 | 2.20倍 | ― |
+
+MAMFは多数のM/N/K候補から最も速い形状を探す。固定16384角の再現性確認とは目的が異なるため、101対46でREADMEの固定形状表を置換してはいけない。一方で、一般的な「最大BF16 GEMM能力差」を論じる場合は、固定形状1点よりこちらが適切である。
+
+### 4.2 Strix Haloの形状走査
+
+コミュニティでは、公開されている[stas00のMAMFスクリプト](https://github.com/stas00/ml-engineering/tree/master/compute/accelerator/benchmarks)をStrix Haloで約2日間実行した[BF16形状走査](https://www.reddit.com/r/ROCm/comments/1ocxxw6/exploring_strix_halo_bf16_tflops_my_2day/)があり、30 TFLOPSを超える形状が複数報告されている。
+
+また、BF16 `8192 × 8192` の[コミュニティ集計](https://www.reddit.com/r/LocalLLaMA/comments/1pkbmqe/tflops_by_gpu/)にはDGX Spark約60 TFLOPS、Strix Halo約36 TFLOPSとある。ただし投稿者自身がこの2値を未確認のオンライン値として扱っているため、傾向確認にだけ用い、正式な比較値には採用しない。
+
+### 4.3 Cosmos3実形状
+
+`result/cfg_batch_probe/gemm_bf16.json` では、Cosmos3 transformer由来の実形状で最大36.1105 TFLOPSを観測した。例えば `N=3808, K=4096, M=12288` のFFN projectionであり、固定16384角の20.91 TFLOPSを大きく上回る。
+
+これはRadeon 8060Sの上限が20.91 TFLOPSではなく、形状とkernel選択によって少なくとも36 TFLOPS級まで変化することをローカルでも示している。
+
+## 5. 数値が違う理由
+
+| 比較 | GB10 / Strix Halo | 意味 |
+|---|---:|---|
+| 固定16384角 | 4.63倍 | 指定した単一形状＋各runtimeの差 |
+| MAMF最高値 | 2.20倍 | 各GPUが得意な形状での最大BF16 GEMM差 |
+| 8192角コミュニティ値 | 約1.67倍 | 未検証の参考値 |
+
+固定16384角では、GB10の96.91 TFLOPSは外部MAMF 101 TFLOPSの約96%に達する。一方、本環境の20.91 TFLOPSは外部Strix Halo MAMF 46 TFLOPSの約45%で、ローカル実形状最大36.11 TFLOPSよりも低い。
+
+ここから、4.63倍のうち相当部分はRadeon側の固定形状に対するkernel適合度やlibrary選択によって拡大している、と推定できる。ただし、外部MAMFは別筐体・別runtimeであり、差の全量を特定のlibraryへ割り当てることはできない。
+
+## 6. 実アプリでの差
+
+同じThe Register比較では、単一batchのLLM decodeは両機が近い一方、compute-boundになりやすいprompt processingではGB10が約2〜3倍、FLUX.1 Dev画像生成では約2.5倍だった。decodeはメモリ帯域、prompt processingと画像生成はGEMM演算性能の影響が強いため、MAMFの約2.2倍差と方向が整合する。
+
+[Signal65の比較レポート](https://signal65.com/wp-content/uploads/2026/03/Signal65-Insights_NVIDIA-DGX-Spark-Platform-Arm-and-NVIDIA-Reinvent-the-Workstation.pdf)では、BF16画像生成でGB10が約1.3〜2倍、Wan 2.2 14B動画生成で7.6倍だった。ただし、この資料はNVIDIA関連の調査で、AMD側が一部FP16/FP8 workloadを実行できないなどsoftware対応状況も含む。純粋なGEMMハードウェア差ではなく、end-to-end stack差の参考として扱う。
+
+## 7. 適切な読み方
+
+- **固定形状の再現比較**には `96.91 vs 20.91 TFLOPS（4.63倍）` を使う
+- **最大BF16 GEMM能力の比較**には外部MAMFの `101 vs 46 TFLOPS（2.20倍）` を参考にする
+- **Cosmos3の性能上限**には実形状の36.11 TFLOPSとend-to-end測定を使い、固定16384角を上限にしない
+- **CUDAの効果**を論じる際は、GPU規模、演算器構成、kernel選択、runtime成熟度と分離不能であることを明記する
+- NVIDIAの1 PFLOP FP4（sparsity込み）とAMDの50 NPU TOPSはprecision・sparsity・実行デバイスが異なるため、このBF16 GPU GEMM表へ混ぜない
+
+## 8. 再現方法
+
+本環境の固定形状測定:
+
+```bash
+python3 scripts/bench_peak.py
+```
+
+最大到達形状を比較する場合は、固定形状スクリプトとは別にMAMFの同一revision・同一探索範囲を両機で実行する必要がある。現時点では外部記事値の参照であり、本プロジェクトが両機でMAMFを再測定した結果ではない。

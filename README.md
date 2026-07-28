@@ -116,6 +116,8 @@ T2I / T2V / I2V は guidance（CFG）設定で transformer の計算量が約 2 
 
 ブログ記事「[DGX Sparkで見る“デスクサイドAI”の実力](https://www.hpc.co.jp/tech-blog/2026/03/17/dgx-spark-desk-side/)」で実施された大規模行列乗算（16384 × 16384）と同条件にて、本環境の GPU ピークスループットを実測・比較しました。
 
+> **詳細**: [固定形状・外部MAMF・Cosmos3実形状を含むGEMM比較レポート](docs/dgx_spark_comparison_report.md)
+
 ### 📊 行列乗算実測 TFLOPS 比較
 
 | 精度フォーマット | DGX Spark (GB10) 実測値 | 本環境 (Radeon 8060S / gfx1151) | 性能比 (GB10 / 本環境) |
@@ -125,10 +127,7 @@ T2I / T2V / I2V は guidance（CFG）設定で transformer の計算量が約 2 
 | **FP32 (IEEE 754 Single)** | 18.54 TFLOPS | **2.86 TFLOPS** | **6.48 倍** |
 | **FP64 (Double Precision)** | 0.42 TFLOPS | **0.45 TFLOPS** | **0.93 倍** (本環境が優位) |
 
-#### 📝 特筆すべき考察
-*   **AI半精度 (FP16/BF16)**: DGX Spark (GB10) の Tensor Core が圧倒的（約 4.6〜4.8倍高速）ですが、本環境も行列演算アクセラレータ (WMMA) の駆動により、単精度比で**約 7.3 倍の高速化（20.91 TFLOPS）**を達成しています。
-*   **ピーク値は形状依存**: 上表は 16384×16384 という単一形状での実測です。Cosmos3 transformer の実運用 GEMM 形状（TunableOp 調律済み）では BF16 で**最大 36.11 TFLOPS** を観測しており（`result/cfg_batch_probe/gemm_bf16.json`）、上表の値を性能上限の根拠として使う場合は形状依存であることに注意してください。
-*   **倍精度 (FP64) での逆転**: AI 特化型アーキテクチャの設計思想から FP64 演算器が極端に制限されている Blackwell (GB10) に対し、コンシューマ向け汎用設計の Radeon (gfx1151) の方が物理的な削減割合が少なく、**本環境が倍精度演算において約 7% 上回る**という興味深い逆転現象が実証されました。
+> **読み方**: 4.63倍は固定16384角と各software stackを含む差で、一般的な最大BF16性能差ではありません。外部のMAMF直接比較はGB10 101 / Strix Halo 46 TFLOPS（約2.20倍）、本環境のCosmos3実形状は最大36.11 TFLOPSです。形状・kernel選択・runtime差を含む詳細と出典は上記レポートを参照してください。
 
 ---
 

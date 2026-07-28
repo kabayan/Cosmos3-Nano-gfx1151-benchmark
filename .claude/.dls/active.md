@@ -1,5 +1,25 @@
 # DLS active エントリ
 
+## DLS-023
+- **date**: 2026-07-28
+- **what**: DGX Spark と Radeon 8060S の対外的な行列積比較では、固定16384角の実測差と最大到達性能差を区別し、単一形状の4.63倍を一般的なBF16 GPU能力差またはCUDA単独の効果として扱わない
+- **why**:
+  - origin: user_request
+  - business: READMEの固定形状比較だけでは、GB10とEVO-X2の一般的な演算性能が常に4.63倍違うと誤読される。外部MAMF、ローカル実形状、実アプリを同じ評価軸ごとに分離し、比較の再利用時に過大な原因帰属を防ぐ必要がある
+  - constraint: 固定16384角はGB10 96.91 / 本環境20.91 TFLOPSで再現可能な単一形状比較。外部の両機直接MAMFは101 / 46 TFLOPSだが、最良形状探索であり測定目的が異なる。本環境のCosmos3実形状でも最大36.11 TFLOPSを観測している
+- **where**: README.md §4、docs/dgx_spark_comparison_report.md、scripts/bench_peak.py、result/cfg_batch_probe/gemm_bf16.json
+- **sources**: .claude/.dls/raw/20260728_doc_gb10_strix_halo_external_gemm_comparison.md
+- **requested_by**: ユーザー（「他に同様のベンチがないか検索」「この内容をREADME.mdとは別ドキュメントに作成し、README.mdからリンク」、2026-07-28）
+- **depends_on**: DLS-017
+- **affects**: DLS-017（README §4 の20.91 TFLOPSを性能上限として読まない注記を、外部MAMFと実形状を含む評価軸分離へ拡張）
+- **rejected_alternatives**:
+  - 外部比較専用の新規レポートを追加する: 既存の固定形状レポートと対象・数値・結論が重複し、参照先が分散するため不採用
+  - READMEの固定形状表を外部MAMF値へ置換する: 測定目的が異なり、本プロジェクトが再現可能な16384角の実測を失うため不採用
+  - 何もしない: 4.63倍をCUDAの有無または一般的な最大性能差へ誤って拡張する余地が残るため不採用
+- **commits**:
+  - baseline: 57db779
+- **assumption**: The RegisterのMAMF 101 / 46 TFLOPSは両機直接比較として信頼できるが、本環境とは筐体・runtime・探索形状が異なるためローカル再現値ではない（confidence: high）。固定形状差がMAMF差より拡大した量を特定のkernelまたはlibraryだけへ配分することはできない（confidence: high）
+
 ## DLS-022
 - **date**: 2026-07-28
 - **what**: PyTorch 2.13 + AOTriton 0.12b は、公式 guidance T2V の現行出力を維持できなかったため本線へ採用せず、PyTorch 2.9.1 の検証済み stack を維持する。2.13用 TunableOp 再調律は、hash 一致を回復する根拠がなく採用条件を満たす見通しがないため実施しない
@@ -123,7 +143,7 @@
 - **sources**: .claude/.dls/raw/20260728_doc_cfg_batching_gemm_poc.md
 - **requested_by**: ユーザー（`/dls-plan CFG条件チューニング` で「B を先に PoC」を選択 2026-07-28）
 - **depends_on**: DLS-016
-- **affects**: DLS-016（「per-call 約 20% の追加短縮が本丸」という見通しに対し、その短縮を担える構造的候補が存在しないことを実測で確定。合否軸 2.0 自体は維持するが、CFG 条件下では未達が固定的な結論になる）, DLS-003（バッチ化は計算内容を変えないため対象外だったが、2.0 到達には計算省略系の解禁が必要になる可能性が出た。解禁は仕様レベルの再定義であり本エントリでは行わない）, DLS-001（「メモリ帯域の物理限界」結論は Policy サンプリング経路のもの。diffusers 経路の GEMM は演算律速であり、律速要因がモードで異なることを明確化）
+- **affects**: DLS-016（「per-call 約 20% の追加短縮が本丸」という見通しに対し、その短縮を担える構造的候補が存在しないことを実測で確定。合否軸 2.0 自体は維持するが、CFG 条件下では未達が固定的な結論になる）, DLS-003（バッチ化は計算内容を変えないため対象外だったが、2.0 到達には計算省略系の解禁が必要になる可能性が出た。解禁は仕様レベルの再定義であり本エントリでは行わない）, DLS-001（「メモリ帯域の物理限界」結論は Policy サンプリング経路のもの。diffusers 経路の GEMM は演算律速であり、律速要因がモードで異なることを明確化）, DLS-023（20.91 TFLOPSを性能上限として読まない注記を外部MAMFと実形状の評価軸分離へ展開）
 - **rejected_hypothesis**:
   - target: DLS-016（rejected_alternatives で次アクション候補としていた「per-call 約 20% の追加短縮策」のうち、唯一具体化されていた構造的候補）
   - hypothesis: CFG の cond/uncond を 1 回の forward にバッチ化すれば重み読み出しが償却され、per-call を 2.0 到達に必要な約 20% 短縮できる
