@@ -1,5 +1,54 @@
 # DLS active エントリ
 
+## DLS-022
+- **date**: 2026-07-28
+- **what**: PyTorch 2.13 + AOTriton 0.12b は、公式 guidance T2V の現行出力を維持できなかったため本線へ採用せず、PyTorch 2.9.1 の検証済み stack を維持する。2.13用 TunableOp 再調律は、hash 一致を回復する根拠がなく採用条件を満たす見通しがないため実施しない
+- **why**:
+  - origin: implementation
+  - business: stack 更新は DLS-020 の限定候補だったが、同一入力・seed の全 21 decoded frame が変化し、精度を下げないというユーザー要求の合格条件（diffusers 経路は hash 一致）を外れた。未調律速度を改善しても採用資格は戻らず、追加調律へ工数を投じる価値がない
+  - constraint: 公式 ROCm 7.2 wheel の実体は torch 2.13.0、Triton ROCm 3.7.1、AOTriton 0.12.0。現行 2.9.1 TunableOp 表は rocBLAS/hipBLASLt validator 不一致で安全に流用できない。2.13 default 対照は 53.361 秒で現行 40.806 秒より 30.8%遅いが、未調律のためこの速度差を 2.13 本体の性能結論には使わない
+- **where**: docker/cosmos3-rocm72-diffusers-torch213.Dockerfile（隔離再現環境）、result/t2v_und_cache_torch213_official_20260728/、result/t2v_und_cache_official_20260728/（現行 baseline）、docs/cosmos3_rocm_further_speedup_reassessment_20260726.md、tasks/todo.md
+- **sources**: .claude/.dls/raw/20260728_doc_pytorch_213_rocm72_isolated_t2v_verification.md
+- **requested_by**: 自己判断（`/dls-continue` による DLS-020 限定検証の執行。精度不変条件と検証対象はユーザー確認済み）
+- **depends_on**: DLS-003, DLS-007, DLS-020, DLS-021
+- **affects**: DLS-020（限定検証 (2) を不採用で完了）, DLS-001（stable stack 更新を未回収候補から除外）, DLS-007（2.9.1 TunableOp 表は 2.13 と互換でなく、stack ごとの再調律が必要と確定）
+- **rejected_hypothesis**:
+  - target: DLS-020（PyTorch 2.13 限定候補）
+  - hypothesis: PyTorch 2.13 + AOTriton 0.12b は、現行出力を維持したまま gfx1151 の compiler/dispatcher 更新による小幅高速化を回収できる
+  - reason: 同一プロトコルの MP4 SHA-256 が `d086...8373` から `b688...51b7` に変化し、decoded framemd5 は全 21 frame で相違、PSNR 28.41 dB / SSIM 0.9488。codec・解像度・frame数は同一なので metadata 差ではなく生成画素差である
+- **rejected_alternatives**:
+  - 2.13用 TunableOp 表を再調律してから再判定する: 調律は速度経路を変えるが、既に外れた hash 一致条件を保証・回復する根拠がない。限定検証を solver 探索 campaign へ拡張する費用対効果がないため停止
+  - 旧2.9.1表の validator を2.13値へ書き換えて流用する: rocBLAS/hipBLASLt の build hash と solver ID 空間が異なり、runtime の安全検査を偽装するため不採用
+  - 画質指標が高ければ hash 不一致を許容する: DLS-020 の事前登録済み合格条件を事後変更し、精度不変要求を弱めるため不採用
+  - 何もしない（隔離再現環境を残さない）: 2.13不採用の再現と将来の stack 修正版比較が困難になるため、派生 Dockerfile は保持する
+- **commits**:
+  - baseline: 9544378
+- **assumption**: 生成画素差の直接原因は PyTorch/AOTriton/rocBLAS/hipBLASLt のいずれかの数値経路変更だが、本判断は原因箇所を識別しなくても成立する（confidence: high。反証には 2.13 stack で現行 MP4 hash を再現する構成が必要）。2.13 default の速度劣化は旧調律表拒否の寄与が大きく、2.13自体の性能評価には使えない（confidence: high）
+
+## DLS-021
+- **date**: 2026-07-28
+- **what**: 公式 guidance 条件の T2V 最適化構成は、出力を byte 完全一致で維持しながら実測 40.806 秒を達成した厳密 und branch cache 有効経路を採用する。従来の 55.561 秒から 26.6% 短縮し、対記事倍率を 2.53x から 1.85x に更新する
+- **why**:
+  - origin: implementation
+  - business: DLS-020 で残した低コスト候補が 5% 停止線を大幅に超え、公式 guidance 条件の T2V を価格差 2.0 基準の内側へ移した。生成条件・モデル重み・dtype・演算内容を変えずに回収できるため、未採用のままにする理由がない
+  - constraint: baseline と cache 有効 run は guidance 6.0、35 steps、256x448、24 requested frames、seed 202、Docker image、AOTriton/TunableOp 条件を同一にし、差分を cache flag のみに限定した。cache stats は 140 calls 中 2 writes / 138 reads / 0 invalidations、追加メモリ 0.139 GiB。MP4 は SHA-256・MD5・`cmp` のすべてで完全一致した
+- **where**: scripts/benchmark_classmethod_article_t2v_i2v_rocm.py（`--und-branch-cache`）、third_party/diffusers/src/diffusers/models/transformers/transformer_cosmos3.py（既存 2 スロット厳密 cache）、result/t2v_und_cache_official_20260728/、README.md §2、tasks/todo.md
+- **sources**: .claude/.dls/raw/20260728_doc_t2v_und_branch_cache_official_guidance_verification.md
+- **requested_by**: 自己判断（`/dls-continue` による DLS-020 限定検証の執行。検証対象と 5% 停止線はユーザー確認済み）
+- **depends_on**: DLS-003, DLS-017, DLS-018, DLS-020
+- **affects**: DLS-016（公式 guidance T2V を 55.561 秒 / 2.53x から 40.806 秒 / 1.85x に更新）, DLS-017（dormant 候補 C の「効果は限定的」という見通しを実測で反証し採用）, DLS-018（T2V cache を dormant 維持した当時の見通しを解消）, DLS-020（限定検証 (1) を完了し 5% 停止線を超過）
+- **rejected_hypothesis**:
+  - target: DLS-017, DLS-018
+  - hypothesis: T2V の understanding 系列は小さく、厳密 und branch cache を有効化しても効果は限定的で 5% 停止線を超えない
+  - reason: 同一プロトコル実測で total 55.561→40.806 秒（-26.56%）、transformer 50.251→35.552 秒（-29.25%）。70 transformer calls/run は不変で出力も byte 完全一致しており、短縮は厳密 cache の read 化に帰属する
+- **rejected_alternatives**:
+  - cache を有効化せず従来値を維持する: 26.6% の確定利得を捨て、価格差 2.0 基準も 2.53x のまま超過するため不採用
+  - 近似 cache や計算省略系へ拡張する: 厳密 cache だけで停止線を超え、DLS-003 の計算内容不変条件を変更する必要がないため再提案しない
+  - 追加反復を採用条件にする: DLS-007 の同一プロトコル再現性 ±0.6% に対し利得 26.6% は十分大きく、hash 一致も決定的。追加 run の費用対効果がないため不採用
+- **commits**:
+  - baseline: 9544378
+- **assumption**: 同一プロトコルの速度再現性は DLS-007 の ±0.6% 帯を維持する（confidence: high。26.6% 利得の採否は帯が多少広がっても変わらない）。記事側 guidance が公式デフォルトだったかは DLS-010 の未確認前提を継承する（confidence: medium）が、cache の baseline 比利得と出力一致には影響しない
+
 ## DLS-020
 - **date**: 2026-07-28
 - **what**: gfx1151 の追加高速化は、生成条件・モデル重み・dtype・演算内容を維持し、現行出力に対する非劣化を実証できる限定検証だけを対象とする。現行 stable stack で 20%以上の改善を期待する根拠はない一方、追加高速化不能とも断定せず、未成熟な upstream 最適化は correctness と統合完了後に再評価する
@@ -11,7 +60,7 @@
 - **sources**: .claude/.dls/raw/20260728_chat_gfx1151_exact_tuning_reassessment.md
 - **requested_by**: ユーザー（「過去のチューニング履歴を公平に判断し、高速化ができないかを判定。精度を下げることは原則不可」および議論ドラフト承認、2026-07-28）
 - **depends_on**: DLS-001, DLS-002, DLS-003, DLS-015, DLS-017, DLS-018, DLS-019
-- **affects**: DLS-001（「物理限界」を絶対限界ではなく現行 stack の観測上限として限定し、新しい head_dim=128 tuning DB を再評価条件に追加）, DLS-015（MIOpen cache 永続化は維持するが FAST mode の無条件常用には拡張しない）, DLS-017（CFG 条件で20%級の改善余地なしという結論は維持し、再評価対象を upstream の gfx1151/head_dim=128 実測に限定）
+- **affects**: DLS-001（「物理限界」を絶対限界ではなく現行 stack の観測上限として限定し、新しい head_dim=128 tuning DB を再評価条件に追加）, DLS-015（MIOpen cache 永続化は維持するが FAST mode の無条件常用には拡張しない）, DLS-017（CFG 条件で20%級の改善余地なしという結論は維持し、再評価対象を upstream の gfx1151/head_dim=128 実測に限定）, DLS-021（限定検証 (1) の採用判断）, DLS-022（限定検証 (2) の不採用判断）
 - **rejected_alternatives**:
   - Draft AOTriton PR #203/#205 を現在の本線へ手動導入: upstream の correctness・runtime 検証が未完で、精度不変条件を満たす根拠がないため不採用。merge と correctness 完了後に再評価する dormant
   - TeaCache・INT8/SageAttention・sparse attention・steps/frame/guidance 削減: 計算内容または生成条件を変え DLS-003 に反するため再提案しない

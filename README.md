@@ -12,6 +12,9 @@
 *   **ROCm**: 7.2.0
 *   **PyTorch**: 2.9.1+rocm7.2.0
 
+> PyTorch 2.13.0 + AOTriton 0.12.0 も隔離環境で検証しましたが、同一入力・seed の T2V 出力が
+> 現行 2.9.1 と一致しなかったため採用していません。下記の公表値はすべて検証済みの 2.9.1 stack の値です。
+
 ---
 
 ## 2. 4大ユースケース パフォーマンス比較 (対記事比)
@@ -27,21 +30,32 @@ T2I / T2V / I2V は guidance（CFG）設定で transformer の計算量が約 2 
 | No | ユースケース / 処理モード | 記事値 (CUDA) | **guidance 1.0 実測 (対記事比)** | **公式 guidance 実測 (対記事比)** | 実行条件 / 備考 |
 |---|---|---|---|---|---|
 | 1 | **Text-to-image (T2I)** | 22 秒 | **27.136 秒 (1.23x)** | **49.633 秒 (2.25x)** | 960x960, 35 steps (Diffusers-native und branch cache, 2 スロット) |
-| 2 | **Text-to-video (T2V)** | 22 秒 | **32.165 秒 (1.46x)** | **55.561 秒 (2.53x)** | 256p, 24 requested frames, 35 steps |
-| 3 | **Image-to-video (I2V)** | 17 秒 | **25.045 秒 (1.47x)** | **45.622 秒 (2.69x)** | 256p, 24 requested frames, 35 steps |
+| 2 | **Text-to-video (T2V)** | 22 秒 | **32.165 秒 (1.46x)** | **40.806 秒 (1.85x)** | 256p, 24 requested frames, 35 steps (Diffusers-native und branch cache, 2 スロット) |
+| 3 | **Image-to-video (I2V)** | 17 秒 | **25.045 秒 (1.47x)** | **45.622 秒 (2.69x)** | 256p, 24 requested frames, 35 steps (Diffusers-native und branch cache, 2 スロット) |
 | 4 | **Policy Model (生成)** | 21 秒 | **`41.66` 秒 (`1.98x`)** | —（guidance 条件の対象外） | 640x480 x 17f 動画 + 16x10 アクション出力。サンプリング + VAE デコード |
 | - | ┗ デノイズサンプリング | 内訳非公開 | `33.84` 秒 | — | 30 steps |
 | - | ┗ VAE デコード | 内訳非公開 | `7.49` 秒 | — | 17f ビデオ復元 (upsample_3 torch.compile 最適化) |
 | - | ┗ (参考) 入力観測エンコード | 内訳非公開 | `0.28` 秒 | — | `--policy-min-condition-encode` 適用時。未適用時は `81.57` 秒。上記「生成」には含まない。下記 NOTE 参照 |
 
+### 厳密 und branch cache の効果（公式 guidance）
+
+| モード | cache 無効 | cache 有効 | 短縮率 / 高速化 | transformer | 出力等価性 |
+|---|---:|---:|---:|---:|---|
+| **T2I** | 115.589 秒 | **49.633 秒** | **57.1% / 2.33x** | 113.254 → 47.340 秒 | JPG bit 一致 |
+| **T2V** | 55.561 秒 | **40.806 秒** | **26.6% / 1.36x** | 50.251 → 35.552 秒 | MP4 byte 一致 |
+| **I2V** | 192.521 秒 | **45.622 秒** | **76.3% / 4.22x** | 187.087 → 40.238 秒 | MP4 byte 一致 |
+
+いずれも同一入力・seed・steps・guidance・dtype で比較し、cache 有効時は warmup + measured 合計 140 transformer calls 中 2 writes / 138 reads / 0 invalidations でした。Policy Model は Diffusers の understanding branch を使うこの cache の対象外です。
+
 > [!NOTE]
 > * 記事側の値は、動画尺ではなく「モデル常駐後の生成所要時間」です。
 > * 価格差 2.0 基準に対し、**Policy Model（生成 1.98x）は基準の内側**です（入力観測エンコード込みの同期総和では 2.02x で境界上）。
->   **公式 guidance 条件の T2I / T2V / I2V（2.25x / 2.53x / 2.69x）は基準を超過**しています。CFG は cond/uncond の
+>   **公式 guidance 条件の T2V（1.85x）は基準の内側、T2I / I2V（2.25x / 2.69x）は基準を超過**しています。CFG は cond/uncond の
 >   逐次 2 回 forward で transformer 計算量が約 2 倍になるためで、計算内容を変えない範囲での追加短縮余地が
 >   小さいことは GEMM 実測で確認済みです（`result/cfg_batch_probe/`）。guidance 1.0 条件では 3 モードとも基準内です。
 > * 記事の実際の guidance 設定は未確認です。1.0 / 公式デフォルトのどちらであっても、対応する実測値を上表に併記しています。
->   公式 guidance 条件の測定記録は `result/guidance_2slot_20260728/`（T2I / I2V）と `result/guidance_official_20260728/`（T2V）です。
+>   公式 guidance 条件の測定記録は `result/guidance_2slot_20260728/`（T2I / I2V）と `result/t2v_und_cache_official_20260728/`（T2V）です。
+> * 厳密 und branch cache は T2I / T2V / I2V の3モードすべてで出力一致を確認済みです。速度と transformer 内訳は上表を参照してください。
 > * 解像度、ステップ数、フレーム数、計算内容（近似・省略なし）は記事と同一条件で実行しています。
 >   ただし **Policy Model の出力精度は公式合格基準を満たしていません**: golden action MSE の本環境実測は
 >   0.126〜0.134 で、公式基準（< 0.05）および記事の報告値（0.0132、合格）を上回ります。速度最適化の影響は
@@ -93,6 +107,8 @@ T2I / T2V / I2V は guidance（CFG）設定で transformer の計算量が約 2 
     Cosmos3 の Transformer レイヤーで発生するすべての行列乗算（GEMM）形状をスキャンし、`gfx1151` アーキテクチャで最速となる hipBLASLt/Tensile カーネルを自動割り当て。
 5.  **VAE 部分コンパイル (`torch.compile` max-autotune)**:
     VAE デコード処理の 95.3% の負荷が集中していた最終アップサンプリングブロック `upsample_3` のみを選択的にコンパイルし、3D 畳み込み・活性化・正規化をカーネルフュージョン。
+6.  **厳密 und branch cache（CFG 2 スロット）**:
+    denoising step 間で不変な understanding branch を cond / uncond ごとに再利用。T2V の公式 guidance 実測では 140 transformer calls 中 2 writes / 138 reads となり、生成ステップ・CFG・dtype・演算内容を変えずに 26.6% 短縮。出力の byte 完全一致を確認済み。
 
 ---
 
